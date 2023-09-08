@@ -1,0 +1,121 @@
+local plr = game.Players.LocalPlayer
+
+local plot = workspace.Tycoon.Plot[plr.Team.Name]
+
+local dropper
+
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+
+local w = library:Window("Merge Droppers!")
+
+w:Label("Toggles", Color3.fromRGB(127, 143, 166))
+
+w:Toggle("Auto Collect", false, function(bool)
+
+    getgenv().collect = bool 
+
+    while getgenv().collect and task.wait(0.25) do
+
+        for _,part in pairs(plot.DropParts:GetDescendants()) do
+
+            if part.Name == "Wool" then
+
+                part.CFrame = plr.Character.HumanoidRootPart.CFrame
+
+            end
+
+        end
+
+    end
+
+end)
+
+w:Toggle("Auto Deposit", false, function(bool)
+
+    getgenv().deposit = bool 
+
+    while getgenv().deposit and task.wait(0.25) do
+
+        firetouchinterest(plot.Buttons_E.Put.Head, plr.Character.HumanoidRootPart, 0)
+
+        firetouchinterest(plot.Buttons_E.Put.Head, plr.Character.HumanoidRootPart, 1)
+
+    end
+
+end)
+
+w:Toggle("Auto Upgrade", false, function(bool)
+
+    getgenv().upgrade = bool 
+
+    while getgenv().upgrade and task.wait(0.25) do
+
+        firetouchinterest(plot.Buttons_E.Upgrade.Head, plr.Character.HumanoidRootPart, 0)
+
+        firetouchinterest(plot.Buttons_E.Upgrade.Head, plr.Character.HumanoidRootPart, 1)
+
+    end
+
+end)
+
+w:Toggle("Auto Merge", false, function(bool)
+
+    getgenv().merge = bool 
+
+    while getgenv().merge and task.wait(0.25) do
+
+        firetouchinterest(plot.Buttons_E.Merge.Head, plr.Character.HumanoidRootPart, 0)
+
+        firetouchinterest(plot.Buttons_E.Merge.Head, plr.Character.HumanoidRootPart, 1)
+
+    end
+
+end)
+
+w:Label("Purchase", Color3.fromRGB(127, 143, 166))
+
+w:Dropdown("Droppers", {"1 Dropper", "5 Droppers", "10 Droppers", "25 Droppers", "50 Droppers", "100 Droppers"}, function(name)
+
+    if name == "1 Dropper" then
+
+        dropper = "Add"
+
+    elseif name == "5 Droppers" then
+
+        dropper = "Add5"
+
+    elseif name == "10 Droppers" then
+
+        dropper = "Add10"
+
+    elseif name == "25 Droppers" then
+
+        dropper = "Add25"
+
+    elseif name == "50 Droppers" then
+
+        dropper = "Add50"
+
+    elseif name == "100 Droppers" then
+
+        dropper = "Add100"
+
+    end
+
+end)
+
+w:Toggle("Auto Buy", false, function(bool)
+
+    getgenv().buy = bool 
+
+    while getgenv().buy and task.wait(0.25) do
+
+        firetouchinterest(plot.Buttons_E[dropper].Head, plr.Character.HumanoidRootPart, 0)
+
+        firetouchinterest(plot.Buttons_E[dropper].Head, plr.Character.HumanoidRootPart, 1)
+
+    end
+
+end)
+
+w:Label("By Bac0nH1ckOff", Color3.fromRGB(127, 143, 166))
