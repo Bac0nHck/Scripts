@@ -1,40 +1,36 @@
 local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
 local w = library:Window("Hit Hoop Simulator")
-
 getgenv().balls = false
 getgenv().cups = false
-
 w:Toggle("Farm Balls", false, function(bool)
-    getgenv().balls = bool
-
-    while game:GetService("RunService").RenderStepped:wait() and getgenv().balls do
-        local args = {
-            [1] = "/\229\133\179\229\141\161?\229\174\140\230\136\144\232\138\130\231\130\185",
-            [2] = "\230\153\174\233\128\154\232\174\173\231\187\131",
-            [3] = 0
-        }
-        game:GetService("ReplicatedStorage").WuKong.RemoteActionFunction:InvokeServer(unpack(args))
-    end
+   getgenv().balls = bool
+   while game:GetService("RunService").RenderStepped:wait() do 
+      if not balls then break end
+      local args = {
+         [1] = "/\229\133\179\229\141\161?\229\174\140\230\136\144\232\138\130\231\130\185",
+         [2] = "\230\153\174\233\128\154\232\174\173\231\187\131",
+         [3] = 0
+     }
+     
+     game:GetService("ReplicatedStorage").WuKong.RemoteActionFunction:InvokeServer(unpack(args))     
+   end
 end)
-
 w:Toggle("Farm Cups", false, function(bool)
-    getgenv().cups = bool
-
-    while game:GetService("RunService").RenderStepped:wait() and getgenv().cups do
-        local args = {
-            [1] = "/\229\133\179\229\141\161?\229\174\140\230\136\144\232\138\130\231\130\185",
-            [2] = "\230\140\145\230\136\152",
-            [3] = 2
-        }
-
-        game:GetService("ReplicatedStorage").WuKong.RemoteActionFunction:InvokeServer(unpack(args))
-    end
+   getgenv().cups = bool
+   while game:GetService("RunService").RenderStepped:wait() do
+      if not cups then break end
+      local args = {
+         [1] = "/\229\133\179\229\141\161?\229\174\140\230\136\144\232\138\130\231\130\185",
+         [2] = "\230\140\145\230\136\152",
+         [3] = 0
+     }
+     
+     game:GetService("ReplicatedStorage").WuKong.RemoteActionFunction:InvokeServer(unpack(args))     
+   end
 end)
-
 w:Label("~ Bac0nH1ckOff", Color3.fromRGB(127, 143, 166))
-
 w:Button("Destroy Gui", function()
-    getgenv().balls = false
-    getgenv().cups = false
-    library:Destroy()
+   getgenv().balls = false
+   getgenv().cups = false
+   library:Destroy()
 end)
