@@ -1,0 +1,32 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+local w = library:Window("Jaws ESP")
+local highlight = Instance.new("Highlight")
+highlight.Name = "ESP"
+getgenv().esp = false
+local sharks = workspace.Gameplay.Sharks
+w:Toggle("Toggle", false, function(bool)
+    esp = bool
+    if esp == true then
+        while true do
+            if not esp then break end
+            for _, v in pairs(workspace.Gameplay.Sharks:GetDescendants()) do
+                if v.Name == "Shark" and not v:FindFirstChild("ESP") then
+                    local esp = highlight:Clone()
+                    esp.Parent = v
+                end
+            end
+            wait()
+        end
+    elseif esp == false then
+        for _, v in pairs(workspace.Gameplay.Sharks:GetDescendants()) do
+            if v.Name == "ESP" then
+                v:Destroy()
+            end
+        end
+    end
+end)
+w:Label("~ Bac0nH1ckOff", Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function()
+    esp = false
+    library:Destroy()
+end)
