@@ -1,0 +1,17 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = library:Window("Shred Things | Farm")
+getgenv().farm = false
+local RunService = game:GetService("RunService")
+local loop
+w:Toggle("Toggle", false, function(bool)
+   farm = bool
+   RunService.RenderStepped:Connect(function()
+      if not farm then loop:Disconnect() end
+      game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("Important"):WaitForChild("MoneyEvent"):FireServer()
+   end)
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function()
+   farm = false
+   library:Destroy()
+end)
