@@ -14,7 +14,7 @@ local function kill(player) local a = { [1] = {}, [2] = player, [3] = player.Cha
 
 w:Toggle("Money Farm", false, function (bool) getgenv().money = bool while getgenv().money do game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ClaimDailyQuest"):FireServer() wait() end end)
 for _,v in pairs(weapons:GetDescendants()) do if v:IsA("Model") and v.Parent.Name == "Common" or v.Parent.Name == "Epic" or v.Parent.Name == "Legendary" or v.Parent.Name == "Unknown" then table.insert(weaponList, v.Name) end end
-w:Dropdown("Get Weapon", weaponList, function (name) game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("UnlockWeapon"):FireServer(name) end)
+w:Dropdown("Unlock Weapon", weaponList, function (name) game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("UnlockWeapon"):FireServer(name) end)
 w:Button("Unlock All Weapons", function () for i = 1, #weaponList do game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("UnlockWeapon"):FireServer(weaponList[i]) end end)
 w:Slider("WalkSpeed",10,100,16, function(value) plr.Character.Humanoid.WalkSpeed = value end)
 w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
