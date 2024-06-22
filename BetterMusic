@@ -1,0 +1,24 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+local w = library:Window(game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name .. " | Main Tab")
+local k = library:Window("Kill Tab")
+
+getgenv().money = false
+getgenv().wins = false
+local plr = game.Players.LocalPlayer
+local weaponList = {}
+local weapons = game.ReplicatedStorage.Weapons
+local target = nil
+
+local function notif(text) game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Kill", Text = text, Duration = 1.3 }) end
+local function kill(player) local a = { [1] = {}, [2] = player, [3] = player.Character.Humanoid, [4] = 9e9 } game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("DamagePlayer"):FireServer(unpack(a)) end
+
+w:Toggle("Money Farm", false, function (bool) getgenv().money = bool while getgenv().money do game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ClaimDailyQuest"):FireServer() wait() end end)
+for _,v in pairs(weapons:GetDescendants()) do if v:IsA("Model") and v.Parent.Name == "Common" or v.Parent.Name == "Epic" or v.Parent.Name == "Legendary" or v.Parent.Name == "Unknown" then table.insert(weaponList, v.Name) end end
+w:Dropdown("Get Weapon", weaponList, function (name) game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("UnlockWeapon"):FireServer(name) end)
+w:Button("Unlock All Weapons", function () for i = 1, #weaponList do game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("UnlockWeapon"):FireServer(weaponList[i]) end end)
+w:Slider("WalkSpeed",10,100,16, function(value) plr.Character.Humanoid.WalkSpeed = value end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+
+k:Box("Target", function (name) local lowerName = string.lower(name) for _, player in ipairs(game.Players:GetPlayers()) do local lowerPlayer = string.lower(player.Name) if string.sub(lowerPlayer, 1, #lowerName) == lowerName then target = player end end end)
+k:Button("Kill Target", function () if target ~= nil then if plr.Team and plr.Team ~= "" then kill(target) else notif("You need to be in the game") end else notif("Select a target") end end)
+k:Button("Kill All", function () if plr.Team and plr.Team ~= "" then for _, player in pairs(game.Players:GetPlayers()) do if player ~= plr then kill(player) end end else notif("You need to be in the game") end end)
