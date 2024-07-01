@@ -1,0 +1,51 @@
+--[[
+   t.me/arceusxscripts | t.me/RobloxExploits
+]]
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+local blockTag = "CustomBlock"
+local textureId = "http://www.roblox.com/asset/?id=8275209660"
+
+local function createBlock(offsetY)
+    local character = player.Character or player.CharacterAdded:Wait()
+    local primaryPart = character:FindFirstChild("HumanoidRootPart")
+    
+    if primaryPart then
+        local block = Instance.new("Part")
+        block.Name = blockTag
+        block.Size = Vector3.new(4, 4, 4)
+        block.Anchored = true
+        block.Position = primaryPart.Position + (primaryPart.CFrame.lookVector * 5) - Vector3.new(0, offsetY, 0)
+        
+        for _, face in pairs(Enum.NormalId:GetEnumItems()) do
+            local texture = Instance.new("Texture")
+            texture.Texture = textureId
+            texture.Face = face
+            texture.Parent = block
+        end
+        
+        block.Parent = workspace
+    end
+end
+
+local function clearBlocks()
+    for _, block in pairs(workspace:GetChildren()) do
+        if block.Name == blockTag then
+            block:Destroy()
+        end
+    end
+end
+
+mouse.KeyDown:Connect(function(key)
+    if key:lower() == "z" then
+        createBlock(1.35)
+    elseif key:lower() == "x" then
+        createBlock(5)
+    elseif key:lower() == "c" then
+        clearBlocks()
+    end
+end)
+
+warn("loaded")
