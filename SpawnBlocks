@@ -7,6 +7,7 @@ local mouse = player:GetMouse()
 
 local blockTag = "CustomBlock"
 local textureId = "http://www.roblox.com/asset/?id=8275209660"
+local deletionRadius = 10
 
 local function createBlock(offsetY)
     local character = player.Character or player.CharacterAdded:Wait()
@@ -45,6 +46,21 @@ mouse.KeyDown:Connect(function(key)
         createBlock(5)
     elseif key:lower() == "c" then
         clearBlocks()
+    end
+end)
+
+mouse.Button1Down:Connect(function()
+    local target = mouse.Target
+    if target and target.Name == blockTag then
+        local character = player.Character or player.CharacterAdded:Wait()
+        local primaryPart = character:FindFirstChild("HumanoidRootPart")
+        
+        if primaryPart then
+            local distance = (primaryPart.Position - target.Position).magnitude
+            if distance <= deletionRadius then
+                target:Destroy()
+            end
+        end
     end
 end)
 
