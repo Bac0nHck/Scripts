@@ -1,0 +1,60 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+local w = library:Window(game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name)
+getgenv().rainbow = false
+getgenv().spameggs = false
+getgenv().spamcrumbs = false
+local plr = game.Players.LocalPlayer.Character
+local colors = {
+    {"Primary", 1, 0, 0},                              -- red
+    {"Primary", 0.9019608497619629, 1, 0},             -- yellow
+    {"Primary", 0.18039216101169586, 1, 0},            -- green
+    {"Primary", 0.25882354378700256, 0.9647059440612793, 1}, -- blue
+    {"Primary", 0.9764706492424011, 0.20784315466880798, 1}  -- purple
+}
+w:Toggle("Eggs Spam", false, function(bool)
+    getgenv().spameggs = bool
+    while getgenv().spameggs do
+        game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("LayEggs"):FireServer("Spawn")
+        wait()
+    end
+end)
+w:Toggle("Crumbs Spam", false, function (bool)
+    getgenv().spamcrumbs = bool
+    while getgenv().spamcrumbs do
+        game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("SpawnCrumbs"):FireServer("Spawn")
+        wait()
+    end
+end)
+w:Toggle("Rainbow Duck", false, function (bool)
+    getgenv().rainbow = bool
+    while getgenv().rainbow do
+        for _, color in ipairs(colors) do
+            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("ChangeColors"):FireServer(unpack(color))
+            wait()
+        end
+    end
+end)
+w:Button("Get All Badges", function ()
+    game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer("This badge is impossible!", "All")
+    for _, badge in ipairs(workspace.BadgeBlocks:GetChildren()) do
+        firetouchinterest(plr.HumanoidRootPart, badge, 0)
+        firetouchinterest(plr.HumanoidRootPart, badge, 1)
+    end
+end)
+w:Button("Wear All Hats", function ()
+    plr = game.Players.LocalPlayer.Character
+    for _, hat in ipairs(workspace.HatGivers:GetDescendants()) do
+        if hat:IsA("ProximityPrompt") then
+            plr.HumanoidRootPart.CFrame = hat.Parent.CFrame
+            wait(.4)
+            fireproximityprompt(hat, 2.5)
+        end
+    end
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function ()
+    getgenv().rainbow = false
+    getgenv().spameggs = false
+    getgenv().spamcrumbs = false
+    library:Destroy()
+end)
