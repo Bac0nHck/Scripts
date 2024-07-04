@@ -2,6 +2,7 @@ local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroe
 local w = library:Window(game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name)
 getgenv().rainbow = false
 getgenv().spameggs = false
+getgenv().destroy = false
 getgenv().spamcrumbs = false
 local plr = game.Players.LocalPlayer.Character
 local colors = {
@@ -15,6 +16,25 @@ w:Toggle("Eggs Spam", false, function(bool)
     getgenv().spameggs = bool
     while getgenv().spameggs do
         game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("LayEggs"):FireServer("Spawn")
+        wait()
+    end
+end)
+w:Toggle("Destroy Objects [ANTI-LAG]", false, function(bool)
+    plr = game.Players.LocalPlayer.Character
+    getgenv().destroy = bool
+    while getgenv().destroy do
+        for _, egg in pairs(workspace.Spawnable:FindFirstChild("Eggs"):GetChildren()) do
+            egg:Destroy()
+        end
+        for _, peas in pairs(workspace.Spawnable.Peas:GetChildren()) do
+            peas:Destroy()
+        end
+        for _, duck in pairs(plr:GetChildren()) do
+            local lowerName = duck.Name:lower()
+            if string.find(lowerName, "duck") then
+                duck:Destroy()
+            end
+        end
         wait()
     end
 end)
