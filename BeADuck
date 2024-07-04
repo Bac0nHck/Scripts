@@ -38,7 +38,7 @@ w:Toggle("Destroy Objects [ANTI-LAG]", false, function(bool)
         wait()
     end
 end)
-w:Toggle("Crumbs Spam", false, function (bool)
+w:Toggle("Peas Spam", false, function (bool)
     getgenv().spamcrumbs = bool
     while getgenv().spamcrumbs do
         game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("SpawnCrumbs"):FireServer("Spawn")
