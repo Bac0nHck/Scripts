@@ -261,6 +261,7 @@ spawn(function()
 		end
 
 		local letter_replacements = {
+			-- eng
 			["\n"] = newline,
 			["f"] = "ƒ",
 			["u"] = "Џ", -- using "Џ" from the last `replace` in your function
@@ -276,7 +277,18 @@ spawn(function()
 			["d"] = "ď",
 			["k"] = "Ķ", -- or "ĸ"
 			["e"] = "ē",
-			["m"] = "Μ"
+			["m"] = "Μ",
+			-- ru
+			["е"] = "ē",
+			["а"] = "ą",
+			["о"] = "Ο",
+			["и"] = "Џ",
+			["й"] = "Џ",
+			["ч"] = "4",
+			["м"] = "m",
+			["к"] = "k",
+			["п"] = "n",
+			["у"] = "У"
 		}
 
 		local function letters_filter(message)
