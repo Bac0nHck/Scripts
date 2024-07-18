@@ -15,7 +15,7 @@ local plots = workspace.__THINGS.Plots:GetDescendants()
 
 local credits = "t.me/arceusxscripts"
 
-getgenv().settings = { crop = false, buy = false, chests = false, boost = false }
+getgenv().settings = { crop = false, buy = false, chests = false, boost = false, rebith = false }
 
 local function processSquares(actionName, conditionFunc, useFireServer)
     for _, s in pairs(plots) do
@@ -65,6 +65,13 @@ w:Toggle("Auto Use Boosts", false, function(bool)
         for _, boost in pairs(boosts) do
             useBoost(boost)
         end
+        wait(1)
+    end
+end)
+w:Toggle("Auto Rebith", false, function(bool)
+    getgenv().settings.rebith = bool
+    while getgenv().settings.rebith do
+        workspace.__THINGS.__REMOTES["buy rebirth"]:InvokeServer( { {} } )        
         wait(1)
     end
 end)
