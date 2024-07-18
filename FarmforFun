@@ -1,0 +1,77 @@
+--[[
+  _                        __                                             _       _       
+ | |                      / /                                            (_)     | |      
+ | |_   _ __ ___   ___   / /_ _ _ __ ___ ___ _   _ _____  _____  ___ _ __ _ _ __ | |_ ___ 
+ | __| | '_ ` _ \ / _ \ / / _` | '__/ __/ _ \ | | / __\ \/ / __|/ __| '__| | '_ \| __/ __|
+ | |_ _| | | | | |  __// / (_| | | | (_|  __/ |_| \__ \>  <\__ \ (__| |  | | |_) | |_\__ \
+  \__(_)_| |_| |_|\___/_/ \__,_|_|  \___\___|\__,_|___/_/\_\___/\___|_|  |_| .__/ \__|___/
+                                                                           | |            
+                                                                           |_|            
+]]--
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+local w = library:Window(game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name)
+local plr = game.Players.LocalPlayer
+local plots = workspace.__THINGS.Plots:GetDescendants()
+
+local credits = "t.me/arceusxscripts"
+
+getgenv().settings = { crop = false, buy = false, chests = false, boost = false }
+
+local function processSquares(actionName, conditionFunc, useFireServer)
+    for _, s in pairs(plots) do
+        if s:GetAttribute("Owner") == plr.Name then
+            local squares = s.Plot.Squares:GetChildren()
+            for _, v in pairs(squares) do
+                if conditionFunc(v) then
+                    local args = { { v.Name } }
+                    if useFireServer then
+                        workspace.__THINGS.__REMOTES[actionName]:FireServer(unpack(args))
+                    else
+                        workspace.__THINGS.__REMOTES[actionName]:InvokeServer(unpack(args))
+                    end
+                end
+            end
+        end
+    end
+end
+local function useBoost(boost)
+    local args = { { boost } }
+    workspace.__THINGS.__REMOTES["use boost"]:InvokeServer(unpack(args))
+end
+local function createToggle(name, settingKey, actionName, conditionFunc, useFireServer)
+    w:Toggle(name, false, function(bool)
+        getgenv().settings[settingKey] = bool
+        while getgenv().settings[settingKey] do
+            processSquares(actionName, conditionFunc, useFireServer)
+            wait(1)
+        end
+    end)
+end
+
+createToggle("Auto Crop", "crop", "harvest crop", function(v)
+    return v:FindFirstChild("_ReadyParticles")
+end, true)
+createToggle("Auto Buy Square", "buy", "buy square", function(v)
+    return v:FindFirstChild("_fence")
+end, false)
+createToggle("Auto Open Chests", "chests", "open chest", function(v)
+    local model = v:FindFirstChild("_model")
+    return model and model:FindFirstChild("Crop") and model.Crop:FindFirstChild("Chest")
+end, false)
+w:Toggle("Auto Use Boost", false, function(bool)
+    getgenv().settings.boost = bool
+    while getgenv().settings.boost do
+        local boosts = workspace.__THINGS:WaitForChild("Boosts"):GetChildren()
+        for _, boost in pairs(boosts) do
+            useBoost(boost)
+        end
+        wait(1)
+    end
+end)
+w:Label(credits, Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function()
+    for key, _ in pairs(getgenv().settings) do
+        getgenv().settings[key] = false
+    end
+    library:Destroy()
+end)
