@@ -58,7 +58,7 @@ createToggle("Auto Open Chests", "chests", "open chest", function(v)
     local model = v:FindFirstChild("_model")
     return model and model:FindFirstChild("Crop") and model.Crop:FindFirstChild("Chest")
 end, false)
-w:Toggle("Auto Use Boost", false, function(bool)
+w:Toggle("Auto Use Boosts", false, function(bool)
     getgenv().settings.boost = bool
     while getgenv().settings.boost do
         local boosts = workspace.__THINGS:WaitForChild("Boosts"):GetChildren()
