@@ -68,6 +68,9 @@ w:Toggle("Auto Use Boosts", false, function(bool)
         wait(1)
     end
 end)
+w:Button("Anti AFK", function()
+    for _,v in next, getconnections(game:GetService("Players").LocalPlayer.Idled) do v:Disable() end
+end)
 w:Label(credits, Color3.fromRGB(127, 143, 166))
 w:Button("Destroy Gui", function()
     for key, _ in pairs(getgenv().settings) do
