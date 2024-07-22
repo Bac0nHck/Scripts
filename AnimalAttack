@@ -1,0 +1,49 @@
+--[[
+  _                        __                                             _       _       
+ | |                      / /                                            (_)     | |      
+ | |_   _ __ ___   ___   / /_ _ _ __ ___ ___ _   _ _____  _____  ___ _ __ _ _ __ | |_ ___ 
+ | __| | '_ ` _ \ / _ \ / / _` | '__/ __/ _ \ | | / __\ \/ / __|/ __| '__| | '_ \| __/ __|
+ | |_ _| | | | | |  __// / (_| | | | (_|  __/ |_| \__ \>  <\__ \ (__| |  | | |_) | |_\__ \
+  \__(_)_| |_| |_|\___/_/ \__,_|_|  \___\___|\__,_|___/_/\_\___/\___|_|  |_| .__/ \__|___/
+                                                                           | |            
+                                                                           |_|            
+]]--
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/miroeramaa/TurtleLib/main/TurtleUiLib.lua"))()
+local w = library:Window(game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name)
+getgenv().settings = { credits = false, medkits = false, kill = false }
+local credits = "t.me/arceusxscripts"
+local plr = game.Players.LocalPlayer
+local rStorage = game:GetService("ReplicatedStorage")
+local characters = {}
+local tools = {}
+for _, char in pairs(rStorage.Characters:GetChildren()) do table.insert(characters, char.Name) end
+for _, tool in pairs(rStorage:GetChildren()) do  if tool:IsA("Tool") then table.insert(tools, tool.Name)  end end
+local function createToggle(displayName, n, name)
+    w:Toggle(displayName, false, function (bool)
+        getgenv().settings[n] = bool
+        while getgenv().settings[n] do
+            for _,v in pairs(game.Workspace:GetDescendants()) do
+                if v.Name == name then
+                    firetouchinterest(v, plr.Character.HumanoidRootPart, 0)
+                    firetouchinterest(v, plr.Character.HumanoidRootPart, 1)
+                end
+            end
+            wait()
+        end
+    end)
+end
+w:Dropdown("Characters", characters, function (name)
+    game:GetService("ReplicatedStorage"):WaitForChild("Morph"):FireServer(name)
+end)
+w:Dropdown("Tools", tools, function (name)
+    game:GetService("ReplicatedStorage"):WaitForChild("GIMMETOOL"):InvokeServer(name)
+end)
+createToggle("Farm Credits", "credits", "Credit")
+createToggle("Get Medkits", "medkit", "Medkit")
+w:Label(credits, Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function()
+    for key, _ in pairs(getgenv().settings) do
+        getgenv().settings[key] = false
+    end
+    library:Destroy()
+end)
