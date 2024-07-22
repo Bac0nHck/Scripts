@@ -17,7 +17,7 @@ local rStorage = game:GetService("ReplicatedStorage")
 local characters = {}
 local tools = {}
 for _, char in pairs(rStorage.Characters:GetChildren()) do table.insert(characters, char.Name) end
-for _, tool in pairs(rStorage:GetChildren()) do  if tool:IsA("Tool") then table.insert(tools, tool.Name)  end end
+for _, tool in pairs(rStorage:GetChildren()) do  if tool:IsA("Tool") then table.insert(tools, tool.Name) end end
 local function createToggle(displayName, n, name)
     w:Toggle(displayName, false, function (bool)
         getgenv().settings[n] = bool
