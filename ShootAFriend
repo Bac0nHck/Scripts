@@ -1,0 +1,11 @@
+-- // t.me/arceusxscripts
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("Shoot a Friend!")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local donate = {ReplicatedStorage.Events.Annoying.GivePortableFlag, ReplicatedStorage.Events.GamepassEvents.BlindEveryone, ReplicatedStorage.Events.GamepassEvents.TripEveryone, ReplicatedStorage.Events.TeleportFriendGamepass, ReplicatedStorage.Events.GiveGlowGunTool, ReplicatedStorage.Events.Annoying.SigmaBullet, ReplicatedStorage.Events.GiveTrollGun, ReplicatedStorage.Events.GiveRPGGun, ReplicatedStorage.Events.EagleGunGive}
+for _, d in ipairs(donate) do
+    w:Button(d.Name, function ()
+        d:FireServer()
+    end)
+end
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
