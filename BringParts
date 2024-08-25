@@ -1,0 +1,170 @@
+local Gui = Instance.new("ScreenGui")
+local Main = Instance.new("Frame")
+local UICorner = Instance.new("UICorner")
+local Button = Instance.new("TextButton")
+local UICorner_2 = Instance.new("UICorner")
+local UITextSizeConstraint = Instance.new("UITextSizeConstraint")
+local Text = Instance.new("TextLabel")
+local UITextSizeConstraint_2 = Instance.new("UITextSizeConstraint")
+
+Gui.Name = "Gui"
+Gui.Parent = game.CoreGui
+
+Main.Name = "Main"
+Main.Parent = Gui
+Main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Main.BackgroundTransparency = 0.35
+Main.BorderColor3 = Color3.fromRGB(0, 0, 0)
+Main.BorderSizePixel = 0
+Main.Position = UDim2.new(0.241, 0, 0.395, 0)
+Main.Size = UDim2.new(0.267, 0, 0.217, 0)
+Main.Active = true
+Main.Draggable = true
+
+UICorner.CornerRadius = UDim.new(0, 5)
+UICorner.Parent = Main
+
+Button.Name = "Button"
+Button.Parent = Main
+Button.BackgroundColor3 = Color3.fromRGB(111, 111, 111)
+Button.BackgroundTransparency = 0.75
+Button.BorderColor3 = Color3.fromRGB(0, 0, 0)
+Button.BorderSizePixel = 0
+Button.Position = UDim2.new(0.18, 0, 0.468, 0)
+Button.Size = UDim2.new(0.641, 0, 0.37, 0)
+Button.Font = Enum.Font.SourceSans
+Button.Text = "Toggle: false"
+Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+Button.TextScaled = true
+Button.TextSize = 14.000
+Button.TextWrapped = true
+
+UICorner_2.CornerRadius = UDim.new(0, 5)
+UICorner_2.Parent = Button
+
+UITextSizeConstraint.Parent = Button
+UITextSizeConstraint.MaxTextSize = 49
+
+Text.Name = "Text"
+Text.Parent = Main
+Text.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+Text.BackgroundTransparency = 1.000
+Text.BorderColor3 = Color3.fromRGB(0, 0, 0)
+Text.BorderSizePixel = 0
+Text.Position = UDim2.new(0.159, 0, 0.038, 0)
+Text.Size = UDim2.new(0.683, 0, 0.37, 0)
+Text.Font = Enum.Font.SourceSans
+Text.Text = "Bring Parts"
+Text.TextColor3 = Color3.fromRGB(255, 255, 255)
+Text.TextScaled = true
+Text.TextSize = 14.000
+Text.TextWrapped = true
+
+UITextSizeConstraint_2.Parent = Text
+UITextSizeConstraint_2.MaxTextSize = 49
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+local Folder = Instance.new("Folder", Workspace)
+local Part = Instance.new("Part", Folder)
+local Attachment1 = Instance.new("Attachment", Part)
+Part.Anchored = true
+Part.CanCollide = false
+Part.Transparency = 1
+
+if not getgenv().Network then
+	getgenv().Network = {
+		BaseParts = {},
+		Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
+	}
+
+	Network.RetainPart = function(Part)
+		if Part:IsA("BasePart") and Part:IsDescendantOf(Workspace) then
+			table.insert(Network.BaseParts, Part)
+			Part.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
+			Part.CanCollide = false
+		end
+	end
+
+	local function EnablePartControl()
+		LocalPlayer.ReplicationFocus = Workspace
+		RunService.Heartbeat:Connect(function()
+			sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+			for _, Part in pairs(Network.BaseParts) do
+				if Part:IsDescendantOf(Workspace) then
+					Part.Velocity = Network.Velocity
+				end
+			end
+		end)
+	end
+
+	EnablePartControl()
+end
+
+local function ForcePart(v)
+	if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChildOfClass("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
+		for _, x in ipairs(v:GetChildren()) do
+			if x:IsA("BodyMover") or x:IsA("RocketPropulsion") then
+				x:Destroy()
+			end
+		end
+		if v:FindFirstChild("Attachment") then
+			v:FindFirstChild("Attachment"):Destroy()
+		end
+		if v:FindFirstChild("AlignPosition") then
+			v:FindFirstChild("AlignPosition"):Destroy()
+		end
+		if v:FindFirstChild("Torque") then
+			v:FindFirstChild("Torque"):Destroy()
+		end
+		v.CanCollide = false
+		local Torque = Instance.new("Torque", v)
+		Torque.Torque = Vector3.new(100000, 100000, 100000)
+		local AlignPosition = Instance.new("AlignPosition", v)
+		local Attachment2 = Instance.new("Attachment", v)
+		Torque.Attachment0 = Attachment2
+		AlignPosition.MaxForce = math.huge
+		AlignPosition.MaxVelocity = math.huge
+		AlignPosition.Responsiveness = 200
+		AlignPosition.Attachment0 = Attachment2
+		AlignPosition.Attachment1 = Attachment1
+	end
+end
+
+local blackHoleActive = false
+
+local function toggleBlackHole()
+	blackHoleActive = not blackHoleActive
+	if blackHoleActive then
+		for _, v in ipairs(Workspace:GetDescendants()) do
+			ForcePart(v)
+		end
+
+		Workspace.DescendantAdded:Connect(function(v)
+			if blackHoleActive then
+				ForcePart(v)
+			end
+		end)
+
+		spawn(function()
+			while blackHoleActive and RunService.RenderStepped:Wait() do
+				Attachment1.WorldCFrame = humanoidRootPart.CFrame
+			end
+		end)
+	end
+end
+
+Button.MouseButton1Click:Connect(function()
+	toggleBlackHole()
+	Button.Text = blackHoleActive and "Toggle: true" or "Toggle: false"
+end)
+
+toggleBlackHole()
+
+-- // More Scripts: t.me/arceusxscripts
