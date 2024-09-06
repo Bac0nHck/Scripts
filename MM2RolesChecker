@@ -1,63 +1,63 @@
 --[[
           For those who do not want to get banned on the main account (Run this is script on the alt account)
 ]]
-local function sendWeb(color, role, name)
+pcall(function ()
     local HttpService = game:GetService("HttpService")
-    local Webhook = _G.webhook
+    local OSTime = os.time();
+    local Time = os.date('!*t', OSTime);
 
-    local response = syn.request(
-        {
-            Url = Webhook,
+    local function sendWeb(color, role, player)
+        syn.request({
+            Url = _G.webhook,
             Method = 'POST',
-            Headers = {
-                ['Content-Type'] = 'application/json'
-            },
+            Headers = { ['Content-Type'] = 'application/json' },
             Body = HttpService:JSONEncode({
-                ["content"] = "",
-                ["embeds"] = {{
-                    ["title"] = "**Murder Mystery 2 | Roles Checker**",
-                    ["description"] = "",
-                    ["type"] = "rich",
-                    ["color"] = color,
-                    ["fields"] = {
-                        {
-                            ["name"] = role .. " Name:",
-                            ["value"] = name,
-                            ["inline"] = true
-                        }
-                    }
+                content = "",
+                embeds = {{
+                    title = "**Murder Mystery 2 | Roles Checker**",
+                    color = color,
+                    fields = {
+                        { name = role .. " Name:", value = player.Name .. " [" .. player.DisplayName .. "]", inline = true },
+                        { name = "Roblox Profile:", value = "[Click here](https://www.roblox.com/users/" .. player.UserId .. "/profile)", inline = true }
+                    },
+                    timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec);
                 }}
             })
-        }
-    )
-end
+        })
+    end
 
-local prevMurd = nil
-local prevSher = nil
+    local prevMurd, prevSher, heroSent = nil, nil, false
 
-while true do
-    local murder 
-    local sheriff
-    
-    for _, p in pairs(game.Players:GetPlayers()) do
-        local items = p:FindFirstChild("Backpack")
-        local character = p:FindFirstChild("Character")
-        
-        if items and (items:FindFirstChild("Knife") or (character and character:FindFirstChild("Knife"))) then
-            murder = p
-        elseif items and (items:FindFirstChild("Gun") or (character and character:FindFirstChild("Gun"))) then
-            sheriff = p
+    while true do
+        local murder, sheriff
+
+        for _, p in pairs(game.Players:GetPlayers()) do
+            local items = p.Backpack
+            local character = p.Character
+
+            if (items and items:FindFirstChild("Knife")) or (character and character:FindFirstChild("Knife")) then
+                murder = p
+            elseif (items and items:FindFirstChild("Gun")) or (character and character:FindFirstChild("Gun")) then
+                sheriff = p
+            end
         end
-    end
-    
-    if murder and murder ~= prevMurd then
-        sendWeb(tonumber(16711680), "Murder", murder.Name .. " [" .. murder.DisplayName .. "]")
-        prevMurd = murder
-    end
-    if sheriff and sheriff ~= prevSher then
-       sendWeb(tonumber(255), "Shreiff", sheriff.Name .. " [" .. sheriff.DisplayName .. "]")
-       prevSher = sheriff
-    end
 
-    wait(1)
-end
+        if sheriff and sheriff ~= prevSher and murder == prevMurd then
+            sendWeb(16753920, "Hero", sheriff)
+            heroSent = true
+        end
+
+        if murder and murder ~= prevMurd then
+            sendWeb(16711680, "Murder", murder)
+            prevMurd = murder
+            heroSent = false
+        end
+
+        if sheriff and sheriff ~= prevSher and not heroSent then
+            sendWeb(255, "Sheriff", sheriff)
+        end
+
+        prevSher = sheriff
+        wait(1)
+    end
+end)
