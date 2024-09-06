@@ -1,0 +1,63 @@
+--[[
+          For those who do not want to get banned on the main account (Run this is script on the alt account)
+]]
+local function sendWeb(color, role, name)
+    local HttpService = game:GetService("HttpService")
+    local Webhook = _G.webhook
+
+    local response = syn.request(
+        {
+            Url = Webhook,
+            Method = 'POST',
+            Headers = {
+                ['Content-Type'] = 'application/json'
+            },
+            Body = HttpService:JSONEncode({
+                ["content"] = "",
+                ["embeds"] = {{
+                    ["title"] = "**Murder Mystery 2 | Roles Checker**",
+                    ["description"] = "",
+                    ["type"] = "rich",
+                    ["color"] = color,
+                    ["fields"] = {
+                        {
+                            ["name"] = role .. " Name:",
+                            ["value"] = name,
+                            ["inline"] = true
+                        }
+                    }
+                }}
+            })
+        }
+    )
+end
+
+local prevMurd = nil
+local prevSher = nil
+
+while true do
+    local murder 
+    local sheriff
+    
+    for _, p in pairs(game.Players:GetPlayers()) do
+        local items = p:FindFirstChild("Backpack")
+        local character = p:FindFirstChild("Character")
+        
+        if items and (items:FindFirstChild("Knife") or (character and character:FindFirstChild("Knife"))) then
+            murder = p
+        elseif items and (items:FindFirstChild("Gun") or (character and character:FindFirstChild("Gun"))) then
+            sheriff = p
+        end
+    end
+    
+    if murder and murder ~= prevMurd then
+        sendWeb(tonumber(16711680), "Murder", murder.Name .. " [" .. murder.DisplayName .. "]")
+        prevMurd = murder
+    end
+    if sheriff and sheriff ~= prevSher then
+       sendWeb(tonumber(255), "Shreiff", sheriff.Name .. " [" .. sheriff.DisplayName .. "]")
+       prevSher = sheriff
+    end
+
+    wait(1)
+end
