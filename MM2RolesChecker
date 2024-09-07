@@ -1,37 +1,37 @@
 --[[
           For those who do not want to get banned on the main account (Run this is script on the alt account)
 ]]
-local succ, err = pcall(function ()
-    local HttpService = game:GetService("HttpService")
+local HttpService = game:GetService("HttpService")
 
-    local function sendWeb(color, role, player, icon)
-        local OSTime = os.time();
-        local Time = os.date('!*t', OSTime);
+local function sendWeb(color, role, player, icon)
+    local OSTime = os.time()
+    local Time = os.date('!*t', OSTime)
 
-        syn.request({
-            Url = _G.webhook,
-            Method = 'POST',
-            Headers = { ['Content-Type'] = 'application/json' },
-            Body = HttpService:JSONEncode({
-                content = "",
-                embeds = {{
-                    title = "**Murder Mystery 2 | Roles Checker**",
-                    color = color,
-                    fields = {
-                        { name = role .. " Name:", value = player.Name .. " [" .. player.DisplayName .. "]", inline = true },
-                        { name = "Roblox Profile:", value = "[Click here](https://www.roblox.com/users/" .. player.UserId .. "/profile)", inline = true }
-                    },
-                    thumbnail = { url = "https://files.catbox.moe/" .. icon },
-                    timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec)
-                }}
-            })
+    syn.request({
+        Url = _G.webhook,
+        Method = 'POST',
+        Headers = { ['Content-Type'] = 'application/json' },
+        Body = HttpService:JSONEncode({
+            content = "",
+            embeds = {{
+                title = "**Murder Mystery 2 | Roles Checker**",
+                color = color,
+                fields = {
+                    { name = role .. " Name:", value = player.Name .. " [" .. player.DisplayName .. "]", inline = true },
+                    { name = "Roblox Profile:", value = "[Click here](https://www.roblox.com/users/" .. player.UserId .. "/profile)", inline = true }
+                },
+                thumbnail = { url = "https://files.catbox.moe/" .. icon },
+                timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec)
+            }}
         })
-    end
+    })
+end
 
-    local prevMurd, prevSher, heroSent, gunDropped = nil, nil, false, false
+local prevMurd, prevSher, heroSent, gunDropped = nil, nil, false, false
 
-    while true do
-        for _,v in next, getconnections(game.Players.LocalPlayer.Idled) do 
+while true do
+    local success, err = pcall(function()
+        for _, v in next, getconnections(game.Players.LocalPlayer.Idled) do 
             v:Disable() 
         end
 
@@ -91,9 +91,11 @@ local succ, err = pcall(function ()
         end
 
         prevSher = sheriff
-        wait(1)
+    end)
+
+    if not success then
+        warn("Unexpected error: " .. tostring(err))
     end
-end)
-if not succ then
-    warn("Unexpected error: " .. tostring(err))
+
+    wait(1)
 end
