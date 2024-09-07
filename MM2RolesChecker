@@ -31,6 +31,10 @@ local succ, err = pcall(function ()
     local prevMurd, prevSher, heroSent, gunDropped = nil, nil, false, false
 
     while true do
+        for _,v in next, getconnections(game.Players.LocalPlayer.Idled) do 
+            v:Disable() 
+        end
+
         local murder, sheriff
 
         for _, p in pairs(game.Players:GetPlayers()) do
