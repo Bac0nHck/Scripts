@@ -6,7 +6,7 @@ pcall(function ()
     local OSTime = os.time();
     local Time = os.date('!*t', OSTime);
 
-    local function sendWeb(color, role, player)
+    local function sendWeb(color, role, player, icon)
         syn.request({
             Url = _G.webhook,
             Method = 'POST',
@@ -20,6 +20,7 @@ pcall(function ()
                         { name = role .. " Name:", value = player.Name .. " [" .. player.DisplayName .. "]", inline = true },
                         { name = "Roblox Profile:", value = "[Click here](https://www.roblox.com/users/" .. player.UserId .. "/profile)", inline = true }
                     },
+                    thumbnail = { url = "https://files.catbox.moe/" .. icon },
                     timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec);
                 }}
             })
@@ -43,18 +44,18 @@ pcall(function ()
         end
 
         if sheriff and sheriff ~= prevSher and murder == prevMurd then
-            sendWeb(16753920, "Hero", sheriff)
+            sendWeb(16753920, "Hero", sheriff, "fygk2x.png")
             heroSent = true
         end
 
         if murder and murder ~= prevMurd then
-            sendWeb(16711680, "Murder", murder)
+            sendWeb(16711680, "Murder", murder, "2soa71.png")
             prevMurd = murder
             heroSent = false
         end
 
         if sheriff and sheriff ~= prevSher and not heroSent then
-            sendWeb(255, "Sheriff", sheriff)
+            sendWeb(255, "Sheriff", sheriff, "fygk2x.png")
         end
 
         prevSher = sheriff
