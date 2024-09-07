@@ -1,12 +1,13 @@
 --[[
           For those who do not want to get banned on the main account (Run this is script on the alt account)
 ]]
-pcall(function ()
+local succ, err = pcall(function ()
     local HttpService = game:GetService("HttpService")
-    local OSTime = os.time();
-    local Time = os.date('!*t', OSTime);
 
     local function sendWeb(color, role, player, icon)
+        local OSTime = os.time();
+        local Time = os.date('!*t', OSTime);
+
         syn.request({
             Url = _G.webhook,
             Method = 'POST',
@@ -21,13 +22,13 @@ pcall(function ()
                         { name = "Roblox Profile:", value = "[Click here](https://www.roblox.com/users/" .. player.UserId .. "/profile)", inline = true }
                     },
                     thumbnail = { url = "https://files.catbox.moe/" .. icon },
-                    timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec);
+                    timestamp = string.format('%d-%d-%dT%02d:%02d:%02dZ', Time.year, Time.month, Time.day, Time.hour, Time.min, Time.sec)
                 }}
             })
         })
     end
 
-    local prevMurd, prevSher, heroSent = nil, nil, false
+    local prevMurd, prevSher, heroSent, gunDropped = nil, nil, false, false
 
     while true do
         local murder, sheriff
@@ -43,8 +44,34 @@ pcall(function ()
             end
         end
 
+        local normalZone = workspace:FindFirstChild("Normal")
+        if normalZone and gunDropped ~= true then
+            gunDropped = true
+            for _, g in pairs(normalZone:GetChildren()) do
+                if g.Name == "GunDrop" then
+                    syn.request({
+                        Url = _G.webhook,
+                        Method = 'POST',
+                        Headers = { ['Content-Type'] = 'application/json' },
+                        Body = HttpService:JSONEncode({
+                            content = "",
+                            embeds = {{
+                                title = "**Murder Mystery 2 | Roles Checker**",
+                                color = 65280,
+                                fields = {
+                                    { name = "Gun Status:", value = "Gun has been Dropped", inline = true },
+                                },
+                                thumbnail = { url = "https://files.catbox.moe/fygk2x.png" },
+                            }}
+                        })
+                    })
+                end
+            end
+        end
+
         if sheriff and sheriff ~= prevSher and murder == prevMurd then
             sendWeb(16753920, "Hero", sheriff, "fygk2x.png")
+            gunDropped = false
             heroSent = true
         end
 
@@ -62,3 +89,6 @@ pcall(function ()
         wait(1)
     end
 end)
+if not succ then
+    warn("Unexpected error: " .. tostring(err))
+end
