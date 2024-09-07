@@ -45,27 +45,28 @@ local succ, err = pcall(function ()
         end
 
         local normalZone = workspace:FindFirstChild("Normal")
-        if normalZone and gunDropped ~= true then
-            gunDropped = true
-            for _, g in pairs(normalZone:GetChildren()) do
-                if g.Name == "GunDrop" then
-                    syn.request({
-                        Url = _G.webhook,
-                        Method = 'POST',
-                        Headers = { ['Content-Type'] = 'application/json' },
-                        Body = HttpService:JSONEncode({
-                            content = "",
-                            embeds = {{
-                                title = "**Murder Mystery 2 | Roles Checker**",
-                                color = 65280,
-                                fields = {
-                                    { name = "Gun Status:", value = "Gun has been Dropped", inline = true },
-                                },
-                                thumbnail = { url = "https://files.catbox.moe/fygk2x.png" },
-                            }}
-                        })
+        if normalZone then
+            local gun = normalZone:FindFirstChild("GunDrop")
+            if gun and gunDropped == false then
+                gunDropped = true
+                syn.request({
+                    Url = _G.webhook,
+                    Method = 'POST',
+                    Headers = { ['Content-Type'] = 'application/json' },
+                    Body = HttpService:JSONEncode({
+                        content = "",
+                        embeds = {{
+                            title = "**Murder Mystery 2 | Roles Checker**",
+                            color = 65280,
+                            fields = {
+                                { name = "Gun Status:", value = "Gun has been Dropped", inline = true },
+                            },
+                            thumbnail = { url = "https://files.catbox.moe/fygk2x.png" },
+                        }}
                     })
-                end
+                })
+            elseif not gun then
+                gunDropped = false
             end
         end
 
