@@ -60,7 +60,7 @@ Button.BorderSizePixel = 0
 Button.Position = UDim2.new(0.175383165, 0, 0.574708641, 0)
 Button.Size = UDim2.new(0.644444466, 0, 0.324675322, 0)
 Button.Font = Enum.Font.FredokaOne
-Button.Text = "Bring/Fling"
+Button.Text = "Bring Parts | Off"
 Button.TextColor3 = Color3.fromRGB(0, 0, 0)
 Button.TextScaled = true
 Button.TextSize = 29.000
@@ -173,6 +173,7 @@ local DescendantAddedConnection
 local function toggleBlackHole()
 	blackHoleActive = not blackHoleActive
 	if blackHoleActive then
+		Button.Text = "Bring Parts | On"
 		for _, v in ipairs(Workspace:GetDescendants()) do
 			ForcePart(v)
 		end
@@ -189,6 +190,7 @@ local function toggleBlackHole()
 			end
 		end)
 	else
+		Button.Text = "Bring Parts | Off"
 		if DescendantAddedConnection then
 			DescendantAddedConnection:Disconnect()
 		end
