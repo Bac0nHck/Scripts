@@ -96,10 +96,18 @@ UITextSizeConstraint_3.MaxTextSize = 23
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local character
 local humanoidRootPart
+
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if input.KeyCode == Enum.KeyCode.RightControl and not gameProcessedEvent then
+        mainStatus = not mainStatus
+        Main.Visible = mainStatus
+    end
+end)
 
 local Folder = Instance.new("Folder", Workspace)
 local Part = Instance.new("Part", Folder)
