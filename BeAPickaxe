@@ -1,0 +1,62 @@
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("Be a Pickaxe")
+local u = lib:Window("Auto Upgrade")
+local plr = game.Players.LocalPlayer
+local rStorage = game:GetService("ReplicatedStorage")
+
+getgenv().settings = { size = false, sell = false, kill = false, cash = false }
+getgenv().upgrade_settings = { size_multiplier = false, maximum = false, speed = false, coin_multiplier = false }
+
+local function toggleAction(toggleName, settingPath, event, argsFunc)
+    w:Toggle(toggleName, false, function(state)
+        getgenv()[settingPath] = state
+        while getgenv()[settingPath] do
+            rStorage:WaitForChild(event):FireServer(unpack(argsFunc()))
+            wait()
+        end
+    end)
+end
+
+toggleAction("Auto Size", "settings.size", "IncreaseSize", function()
+    return {plr.Character, plr.Character.PickaxeSize, plr.Character.Humanoid}
+end)
+
+toggleAction("Auto Sell", "settings.sell", "Sell", function() return {} end)
+toggleAction("Dingdong Lucky", "settings.cash", "dingdongLucky", function() return {plr} end)
+toggleAction("Auto Kill", "settings.kill", "KillPlayer", function() return {plr} end)
+
+local amount = 0
+w:Box("Cash Amount", function(val) amount = val end)
+w:Button("Give Cash", function()
+    rStorage:WaitForChild("BuyUpgrade"):InvokeServer("MaxSize", -amount)
+end)
+
+local pSkins = {}
+for _, p in pairs(rStorage.PickaxeSkins:GetChildren()) do
+    table.insert(pSkins, p.Name)
+end
+w:Dropdown("Equip Skin", pSkins, function(name)
+    rStorage:WaitForChild("Gamepasses"):WaitForChild("EquipPickaxeSkin"):FireServer(name)
+end)
+
+local function upgradeToggle(toggleName, settingPath, upgradeType)
+    u:Toggle(toggleName, false, function(state)
+        getgenv()[settingPath] = state
+        while getgenv()[settingPath] do
+            rStorage:WaitForChild("BuyUpgrade"):InvokeServer(upgradeType, 0)
+            wait()
+        end
+    end)
+end
+
+upgradeToggle("Size Multiplier", "upgrade_settings.size_multiplier", "SizeMultiplier")
+upgradeToggle("Maximum Size", "upgrade_settings.maximum", "MaxSize")
+upgradeToggle("Walk Speed", "upgrade_settings.speed", "WalkSpeed")
+upgradeToggle("Coin Multiplier", "upgrade_settings.coin_multiplier", "CoinMultiplier")
+
+u:Label("~ Bac0nH1ckOff", Color3.fromRGB(127, 143, 166))
+u:Button("Destroy Gui", function()
+    for k in pairs(getgenv().settings) do getgenv().settings[k] = false end
+    for k in pairs(getgenv().upgrade_settings) do getgenv().upgrade_settings[k] = false end
+    lib:Destroy()
+end)
