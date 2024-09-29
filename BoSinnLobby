@@ -1,0 +1,49 @@
+-- // https://www.roblox.com/games/140478878240883/Bo-Sinn-Obby-FIX-BUGS
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("Bo Sinn Lobby | Kill All")
+local player = game:GetService("Players").LocalPlayer
+local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+local safeZone = workspace:FindFirstChild("SafeZone") or (function()
+    rootPart.CFrame = CFrame.new(-3142, 172, -587)
+    wait(1)
+    local pvpZone = workspace.Platforms:FindFirstChild("Finish").PVPZone
+    local newSafeZone = Instance.new("Part")
+    newSafeZone.Name = "SafeZone"
+    newSafeZone.Anchored = true
+    newSafeZone.CFrame = pvpZone.CFrame
+    newSafeZone.Size = Vector3.new(10, 1, 10)
+    newSafeZone.Parent = workspace
+    return newSafeZone
+end)()
+getgenv().kill = false
+w:Toggle("Toggle", false, function (bool)
+    getgenv().kill = bool
+    while getgenv().kill do
+        pcall(function ()
+            if rootPart then
+                rootPart.CFrame = safeZone.CFrame + Vector3.new(0, 1, 0)
+                local sword = player.Character:FindFirstChild("ClassicSword")
+                if sword then
+                    local handle = sword:FindFirstChild("Handle")
+                    if handle then
+                        for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+                            local targetRootPart = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                            if targetRootPart and p ~= player then
+                                targetRootPart.CFrame = handle.CFrame
+                            end
+                        end
+                    end
+                    sword:Activate()
+                else
+                    player.Backpack:FindFirstChild("ClassicSword").Parent = player.Character
+                end
+            end
+        end)
+        wait(0.1)
+    end
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+w:Button("Destroy Gui", function ()
+    getgenv().kill = false
+    lib:Destroy()
+end)
