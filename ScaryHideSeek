@@ -79,7 +79,7 @@ m:Toggle("Auto Open", false, function (bool)
     getgenv().settings.crates = bool
     while getgenv().settings.crates do
         openCrate(crate)
-        wait(1)
+        wait(9)
     end
 end)
 m:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
