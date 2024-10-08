@@ -1,14 +1,17 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
 local m = lib:Window("Scary Hide & Seek")
 local t = lib:Window("Teleports")
+local p = lib:Window("Auto Farm")
 local players = game.Players
 local plr = players.LocalPlayer
 local characters = workspace:FindFirstChild("Characters")
 local map = game.Workspace:FindFirstChild("Map")
 getgenv().settings = {speedhack = false, props = false, players = false, crates = false, attack = false}
+getgenv().play_settings = {props = false, seeker = false}
 local function openCrate(name)
     game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Crates.Buy", workspace:FindFirstChild("Crates")[name])    
 end
+-- // Main
 m:Toggle("SpeedHack", false, function (bool)
     getgenv().settings.speedhack = bool
     while getgenv().settings.speedhack do
@@ -79,6 +82,14 @@ m:Toggle("Auto Open", false, function (bool)
         wait(1)
     end
 end)
+m:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+m:Button("Destroy Gui", function ()
+    for _, s in pairs(getgenv().settings) do
+        getgenv().settings[s] = false
+    end
+    lib:Destroy()
+end)
+-- // Teleports
 t:Button("Teleport to Lobby", function()
     plr.Character.HumanoidRootPart.CFrame = CFrame.new(113, 15, 359)
 end)
@@ -112,10 +123,32 @@ t:Box("Player", function (name, focuslost)
         end
     end
 end)
-m:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
-m:Button("Destroy Gui", function ()
-    for _, s in pairs(getgenv().settings) do
-        getgenv().settings[s] = false
+-- // Auto Farm
+p:Toggle("Auto Prop", false, function (bool)
+    getgenv().play_settings.props = bool
+    while getgenv().play_settings.props do
+        if plr:GetAttribute("Hider") then
+            plr.Character.HumanoidRootPart.CFrame = CFrame.new(113, 15, 359)
+        end
+        wait(1)
     end
-    lib:Destroy()
+end)
+p:Toggle("Auto Seeker", false, function (bool)
+    getgenv().play_settings.seeker = bool
+    while getgenv().play_settings.seeker do
+        if plr:GetAttribute("MainSeeker") or plr:GetAttribute("Seeker") then
+            for _, p in pairs(players:GetPlayers()) do
+                if p ~= plr then
+                    if p:GetAttribute("Hider") then
+                        repeat
+                            plr.Character.HumanoidRootPart.CFrame = p.Character.HumanoidRootPart.CFrame
+                            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Tool.Hit", p)
+                            wait(.1)
+                        until p:GetAttribute("Hider") == false
+                    end
+                end
+            end
+        end
+        wait(1)
+    end
 end)
