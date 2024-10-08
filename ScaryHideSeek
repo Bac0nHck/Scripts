@@ -5,7 +5,7 @@ local players = game.Players
 local plr = players.LocalPlayer
 local characters = workspace:FindFirstChild("Characters")
 local map = game.Workspace:FindFirstChild("Map")
-getgenv().settings = {speedhack = false, props = false, players = false, crates = false}
+getgenv().settings = {speedhack = false, props = false, players = false, crates = false, attack = false}
 local function openCrate(name)
     game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Crates.Buy", workspace:FindFirstChild("Crates")[name])    
 end
@@ -44,6 +44,17 @@ m:Toggle("Props ESP", false, function (bool)
                 e:Destroy()
             end
         end
+    end
+end)
+m:Toggle("Auto Attack", false, function (bool)
+    getgenv().settings.attack = bool
+    while getgenv().settings.attack do
+        for _, p in pairs(players:GetPlayers()) do
+            if p ~= plr then
+                game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Tool.Hit", p)
+            end
+        end
+        wait()
     end
 end)
 local crate
