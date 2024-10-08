@@ -136,19 +136,24 @@ end)
 p:Toggle("Auto Seeker", false, function (bool)
     getgenv().play_settings.seeker = bool
     while getgenv().play_settings.seeker do
-        if plr:GetAttribute("MainSeeker") or plr:GetAttribute("Seeker") then
-            for _, p in pairs(players:GetPlayers()) do
-                if p ~= plr then
-                    if p:GetAttribute("Hider") then
-                        repeat
-                            plr.Character.HumanoidRootPart.CFrame = p.Character.HumanoidRootPart.CFrame
-                            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Tool.Hit", p)
-                            wait(.1)
-                        until p:GetAttribute("Hider") == false
+        pcall(function ()
+            if plr:GetAttribute("MainSeeker") or plr:GetAttribute("Seeker") then
+                for _, p in pairs(players:GetPlayers()) do
+                    if p ~= plr then
+                        if p:GetAttribute("Hider") then
+                            repeat
+                                if not getgenv().play_settings.seeker then
+                                    break
+                                end
+                                plr.Character.HumanoidRootPart.CFrame = p.Character.HumanoidRootPart.CFrame
+                                game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Tool.Hit", p)
+                                wait(.1)
+                            until p:GetAttribute("Hider") == false
+                        end
                     end
                 end
             end
-        end
+        end)
         wait(1)
     end
 end)
