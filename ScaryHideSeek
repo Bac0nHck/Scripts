@@ -7,7 +7,7 @@ local plr = players.LocalPlayer
 local characters = workspace:FindFirstChild("Characters")
 local map = game.Workspace:FindFirstChild("Map")
 getgenv().settings = {speedhack = false, props = false, players = false, crates = false, attack = false}
-getgenv().play_settings = {props = false, seeker = false}
+getgenv().play_settings = {props = false, seeker = false, taunt = false}
 local function openCrate(name)
     game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Crates.Buy", workspace:FindFirstChild("Crates")[name])    
 end
@@ -133,6 +133,15 @@ p:Toggle("Auto Prop", false, function (bool)
         wait(1)
     end
 end)
+p:Toggle("Auto Taunt", false, function (bool)
+    getgenv().play_settings.taunt = bool
+    while getgenv().play_settings.taunt do
+        if plr:GetAttribute("Hider") then
+            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent"):FireServer("Abilities.Fire", "Taunt")            
+        end
+        wait(10)
+    end
+end)
 p:Toggle("Auto Seeker", false, function (bool)
     getgenv().play_settings.seeker = bool
     while getgenv().play_settings.seeker do
@@ -157,3 +166,8 @@ p:Toggle("Auto Seeker", false, function (bool)
         wait(1)
     end
 end)
+p:Button("Anti AFK", function()
+    for i,v in pairs(getconnections(game:GetService("Players").LocalPlayer.Idled)) do
+         v:Disable()
+    end
+ end)
