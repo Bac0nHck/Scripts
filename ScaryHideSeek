@@ -26,11 +26,13 @@ m:Toggle("Noclip", false, function (bool)
     getgenv().settings.noclip = bool
     if getgenv().settings.noclip then
         nc = game:GetService("RunService").Stepped:Connect(function ()
-            for _, child in pairs(plr.Character:GetDescendants()) do
-                if child:IsA("BasePart") and child.CanCollide == true then
-                    child.CanCollide = false
+            pcall(function ()
+                for _, child in pairs(plr.Character:GetDescendants()) do
+                    if child:IsA("BasePart") and child.CanCollide == true then
+                        child.CanCollide = false
+                    end
                 end
-            end
+            end)
         end)
     elseif not getgenv().settings.noclip then
         if nc then
