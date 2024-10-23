@@ -1,0 +1,44 @@
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("BABFT | Candy Farm")
+local houses = workspace:FindFirstChild("Houses")
+local plr = game:GetService("Players").LocalPlayer
+local function getCharacter()
+    local character = plr.Character or plr.CharacterAdded:Wait()
+    local humPart = character:FindFirstChild("HumanoidRootPart")
+    return character, humPart
+end
+local function antiAFK()
+    for _,v in pairs(getconnections(plr.Idled)) do
+        v:Disable()
+    end
+end
+getgenv().farm = false
+w:Toggle("Auto Farm", false, function (bool)
+    farm = bool
+    while farm do
+        local character, humPart = getCharacter()
+    
+        if character and humPart and houses then
+            local house = houses:WaitForChild("TrickOrTreatHouse")
+            if house then
+                local door = house:WaitForChild("Door")
+                if door then
+                    humPart.CFrame = door:WaitForChild("DoorInnerTouch").CFrame
+                    wait(.2)
+                    firetouchinterest(humPart, door:WaitForChild("DoorInnerTouch"), 0)
+                    firetouchinterest(humPart, door:WaitForChild("DoorInnerTouch"), 1)
+                end
+            end
+        else
+            plr.CharacterAdded:Wait()
+        end
+        wait(1)
+    end
+end)
+w:Button("Anti AFK", function ()
+    while true do
+        antiAFK()
+        wait(60)
+    end
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
