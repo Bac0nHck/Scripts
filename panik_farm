@@ -1,0 +1,50 @@
+-- // t.me/arceusxscripts
+local plr = game:GetService("Players").LocalPlayer
+local character = plr.Character or plr.CharacterAdded:Wait()
+local humPart = character:WaitForChild("HumanoidRootPart")
+local start = workspace:FindFirstChild("TouchPart")
+local sItems = game:GetService("Workspace"):FindFirstChild("SpawnedItems")
+
+local function checkAllATMs()
+    for _, atm in pairs(game:GetService("Workspace"):GetChildren()) do
+        if atm:IsA("Model") and atm.Name == "ATM" then
+            local screen = atm:FindFirstChild("Screen")
+            if screen and screen:FindFirstChild("SurfaceGui") then
+                local count = screen.SurfaceGui:FindFirstChild("Count")
+                if count and count.Text ~= "MAX/100" then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
+if settings.auto_start and start then
+    while true do
+        humPart.CFrame = start.CFrame
+        wait()
+    end
+else
+    while true do
+        for _, coin in pairs(sItems:GetChildren()) do
+            pcall(function()
+                if coin:IsA("Model") and coin.Name == "Coin" then
+                    humPart.CFrame = coin.Primary.CFrame
+                    wait(0.2)
+                    fireproximityprompt(coin.Primary.ItemPrompt, 7)
+                    wait(0.2)
+                    humPart.CFrame = game:GetService("Workspace"):FindFirstChild("ATM").TouchPart.CFrame
+                    wait(0.5)
+                end
+            end)
+        end
+
+        if settings.auto_rejoin and checkAllATMs() then
+            game:GetService("ReplicatedStorage").Events:WaitForChild("LobbyButton"):FireServer()
+        end
+
+        wait(0.6)
+    end
+end
+-- // t.me/arceusxscripts
