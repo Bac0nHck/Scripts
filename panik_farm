@@ -42,7 +42,7 @@ else
 
         if settings.auto_rejoin and checkAllATMs() then
             game:GetService("ReplicatedStorage").Events:WaitForChild("LobbyButton"):FireServer()
-        elseif
+        else
             break
         end
 
