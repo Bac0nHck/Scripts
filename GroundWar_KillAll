@@ -56,7 +56,7 @@ w:Button("Kill Enemies", function ()
         end
     end
 end)
-w:Toggle("Loop Kill All", getgenv().settings.loopkill_a, function (bool)
+w:Toggle("Loop Kill Enemies", getgenv().settings.loopkill_a, function (bool)
     getgenv().settings.loopkill_a = bool
     if getRPG() then
         task.spawn(function()
