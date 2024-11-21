@@ -1,0 +1,131 @@
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("Ground War | Kill All")
+
+local plrs = game:GetService("Players")
+local plr = plrs.LocalPlayer
+
+local function getRPG()
+    local rpg = plr.Character:FindFirstChild("RPG-7")
+    if not rpg then
+        local a = Instance.new("Message", game:GetService("CoreGui"))
+        a.Text = "Please Equip RPG-7"
+        task.wait(3)
+        a:Destroy()
+        return false
+    else
+        return true
+    end
+end
+
+getgenv().settings = {loopkill_a = false, loopkill_t = false}
+
+local function exp(pos)
+    local args = {
+        [1] = pos,
+        [2] = {
+            ["shellName"] = "RpgShell",
+            ["origin"] = Vector3.new(522.5630493164062, 292.757080078125, -721.740478515625),
+            ["weaponName"] = "RPG-7",
+            ["bulletID"] = plr.Name .. "56952624191732188441.9271536242969",
+            ["currentPenetrationCount"] = 0,
+            ["shellSpeed"] = 400,
+            ["localShellName"] = "RpgShell",
+            ["maxPenetrationCount"] = 3,
+            ["penetrationMultiplier"] = 0.8,
+            ["shellType"] = "Explosive",
+            ["shellMaxDist"] = 7000,
+            ["filterDescendants"] = {
+                [1] = workspace:WaitForChild("Fr0zyRbx"),
+                [2] = workspace:WaitForChild("Camera"):WaitForChild("Viewmodel")
+            }
+        }
+    }
+    game:GetService("ReplicatedStorage"):WaitForChild("ACS_Engine"):WaitForChild("Events"):WaitForChild("ExplosionFX"):FireServer(unpack(args))
+end
+
+w:Button("Kill Enemies", function ()
+    if getRPG() then
+        for _, p in pairs(plrs:GetPlayers()) do
+            if p ~= plr and p.Team and p.Team.Name ~= plr.Team.Name then
+                pcall(function()
+                    for i = 1, 5 do
+                        exp(p.Character.HumanoidRootPart.Position)
+                    end
+                end)
+            end
+        end
+    end
+end)
+w:Toggle("Loop Kill All", getgenv().settings.loopkill_a, function (bool)
+    getgenv().settings.loopkill_a = bool
+    if getRPG() then
+        task.spawn(function()
+            while getgenv().settings.loopkill_a do
+                for _, p in pairs(plrs:GetPlayers()) do
+                    if not getgenv().settings.loopkill_a then break end
+                    if p ~= plr and p.Team and p.Team.Name ~= plr.Team.Name then
+                        pcall(function()
+                            for i = 1, 5 do
+                                if not getgenv().settings.loopkill_a then break end
+                                exp(p.Character.HumanoidRootPart.Position)
+                            end
+                        end)
+                    end
+                end
+                wait(0.2)
+            end
+        end)
+    end
+end)
+
+local function getPlayer(name)
+	local lowerName = string.lower(name)
+	for _, p in ipairs(plrs:GetPlayers()) do
+		local lowerPlayerName = string.lower(p.Name)
+		local lowerDisplayName = string.lower(p.DisplayName)
+		if string.find(lowerPlayerName, lowerName) or string.find(lowerDisplayName, lowerName) then
+			return p
+		end
+	end
+end
+
+local player = nil
+w:Box("Target", function (name, focuslost)
+    if focuslost then
+        player = getPlayer(name)
+    end
+end)
+w:Button("Kill Target", function()
+    if player and player ~= plr and player.Team and plr.Team and player.Team.Name ~= plr.Team.Name and getRPG() and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        pcall(function()
+            repeat
+                exp(player.Character.HumanoidRootPart.Position)
+                wait()
+            until player.Character.Humanoid.Health <= 0
+        end)
+    end
+end)
+
+w:Toggle("Loop Kill Target", getgenv().settings.loopkill_t, function(bool)
+    getgenv().settings.loopkill_t = bool
+    if getRPG() then
+        while getgenv().settings.loopkill_t do
+            if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                pcall(function()
+                    for i = 1, 5 do
+                        exp(player.Character.HumanoidRootPart.Position)
+                    end
+                end)
+            end
+            wait(.2)
+        end
+    end
+end)
+
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+
+w:Button("Destroy Gui", function ()
+    getgenv().settings.loopkill_a = false
+    getgenv().settings.loopkill_t = false
+    lib:Destroy()
+end)
