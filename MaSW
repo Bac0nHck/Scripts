@@ -1,0 +1,25 @@
+-- https://www.roblox.com/games/15862090066/Make-and-Sell-Weapons
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("Make and Sell Weapons")
+local mat = 0
+w:Box("Materials", function (val, focuslost)
+    if focuslost then mat = val end
+end)
+w:Button("Get Materials", function ()
+    game:GetService("ReplicatedStorage"):WaitForChild("Event"):WaitForChild("Train"):FireServer(mat)
+end)
+local weap = 0
+w:Box("Weapons", function (val, focuslost)
+    if focuslost then weap = val end
+end)
+w:Button("Get Weapons", function ()
+    game:GetService("ReplicatedStorage"):WaitForChild("Event"):WaitForChild("CraftWeapon"):FireServer("Stick", weap)
+end)
+local mon = 0
+w:Box("Money", function (val, focuslost)
+    if focuslost then mon = val end
+end)
+w:Button("Get Money", function ()
+    game:GetService("ReplicatedStorage"):WaitForChild("Event"):WaitForChild("SellWeapon"):FireServer(mon, 1)
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
