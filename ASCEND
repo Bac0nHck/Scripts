@@ -1,0 +1,224 @@
+local lib =
+    loadstring(
+    game:HttpGet("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau")
+)()
+local win =
+    lib:CreateWindow {
+    Title = "ASCEND",
+    SubTitle = "by Bac0nH1ckOff",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(660, 425),
+    Resize = true,
+    MinSize = Vector2.new(470, 380),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+}
+
+local MainTab = win:CreateTab {Title = "Main", Icon = "circle-user-round"}
+local CreditTab = win:CreateTab {Title = "Credit", Icon = "wallet-cards"}
+
+local Options = lib.Options
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumPart = Char:WaitForChild("HumanoidRootPart")
+local Trinkets = Workspace:FindFirstChild("SpawnedTrinkets")
+
+local function destroyESP(name)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name == name then
+            obj:Destroy()
+        end
+    end
+end
+
+local toggles = {
+    PlayersESP = MainTab:CreateToggle("playersESP", {Title = "Players ESP", Default = false}),
+    TrinketsESP = MainTab:CreateToggle("trinketsESP", {Title = "Trinkets ESP", Default = false}),
+    AutoPickup = MainTab:CreateToggle("autoPickup", {Title = "Auto Pickup Trinkets", Default = false}),
+    FastPickup = MainTab:CreateToggle("fastPickup", {Title = "Fast Pickup Trinkets", Default = false}),
+    Noclip = MainTab:CreateToggle("noclip", {Title = "Noclip", Default = false}),
+    InfJump = MainTab:CreateToggle("infJump", {Title = "Inf Jump", Default = false})
+}
+
+MainTab:CreateButton {
+    Title = "FullBright",
+    Callback = function()
+        local Lighting = game:GetService("Lighting")
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+    end
+}
+
+MainTab:CreateInput(
+    "speed",
+    {
+        Title = "Speed",
+        Default = Char.Humanoid.WalkSpeed,
+        Numeric = true,
+        Callback = function(value)
+            Char.Humanoid.WalkSpeed = value
+        end
+    }
+)
+
+toggles.Noclip:OnChanged(
+    function()
+        local function noclip()
+            for _, part in pairs(Char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        if Options["noclip"].Value then
+            getgenv().NoclipConnection = game:GetService("RunService").Stepped:Connect(noclip)
+        else
+            if getgenv().NoclipConnection then
+                getgenv().NoclipConnection:Disconnect()
+                getgenv().NoclipConnection = nil
+            end
+        end
+    end
+)
+
+toggles.InfJump:OnChanged(
+    function()
+        local UIS = game:GetService("UserInputService")
+        local connection
+
+        if Options["infJump"].Value then
+            connection =
+                UIS.JumpRequest:Connect(
+                function()
+                    Char:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            )
+            getgenv().InfJumpConnection = connection
+        else
+            if getgenv().InfJumpConnection then
+                getgenv().InfJumpConnection:Disconnect()
+                getgenv().InfJumpConnection = nil
+            end
+        end
+    end
+)
+
+toggles.AutoPickup:OnChanged(
+    function()
+        if Options["autoPickup"].Value then
+            coroutine.wrap(
+                function()
+                    while Options["autoPickup"].Value do
+                        for _, trinket in pairs(Trinkets:GetChildren()) do
+                            if not Options["autoPickup"].Value then
+                                break
+                            end
+                            HumPart.CFrame = trinket.CFrame
+                            fireproximityprompt(trinket:FindFirstChild("ProximityPrompt"), 7)
+                            wait(0.5)
+                        end
+                        wait(1)
+                    end
+                end
+            )()
+        end
+    end
+)
+
+toggles.FastPickup:OnChanged(
+    function()
+        if Options["fastPickup"].Value then
+            coroutine.wrap(
+                function()
+                    while Options["fastPickup"].Value do
+                        for _, trinket in pairs(Trinkets:GetChildren()) do
+                            local prompt = trinket:FindFirstChild("ProximityPrompt")
+                            if prompt then
+                                prompt.HoldDuration = 0
+                            end
+                        end
+                        wait(1)
+                    end
+                end
+            )()
+        end
+    end
+)
+
+toggles.PlayersESP:OnChanged(
+    function()
+        if Options["playersESP"].Value then
+            coroutine.wrap(
+                function()
+                    while Options["playersESP"].Value do
+                        for _, player in pairs(Players:GetPlayers()) do
+                            if
+                                player ~= LocalPlayer and player.Character and
+                                    not player.Character:FindFirstChild("playersESP")
+                             then
+                                local highlight = Instance.new("Highlight", player.Character)
+                                highlight.Name = "playersESP"
+                                highlight.FillColor = Color3.fromRGB(26, 255, 0)
+                                highlight.FillTransparency = 0.6
+                            end
+                        end
+                        wait(1)
+                    end
+                end
+            )()
+        else
+            destroyESP("playersESP")
+        end
+    end
+)
+
+toggles.TrinketsESP:OnChanged(
+    function()
+        if Options["trinketsESP"].Value then
+            coroutine.wrap(
+                function()
+                    while Options["trinketsESP"].Value do
+                        for _, trinket in pairs(Trinkets:GetChildren()) do
+                            if not trinket:FindFirstChild("trinketsESP") then
+                                local billboard = Instance.new("BillboardGui", trinket)
+                                billboard.Name = "trinketsESP"
+                                billboard.Size = UDim2.new(0, 100, 0, 25)
+                                billboard.AlwaysOnTop = true
+                                local text = Instance.new("TextLabel", billboard)
+                                text.Size = UDim2.new(1, 0, 1, 0)
+                                text.BackgroundTransparency = 1
+                                text.Text = trinket.Name
+                                text.TextColor3 = Color3.fromRGB(255, 255, 0)
+                            end
+                        end
+                        wait(1)
+                    end
+                end
+            )()
+        else
+            destroyESP("trinketsESP")
+        end
+    end
+)
+
+CreditTab:CreateParagraph("scriptblox", {Title = "Scriptblox.com:", Content = ""})
+CreditTab:CreateButton {
+    Title = "Username: @Bac0nH1ckOff",
+    Callback = function()
+        setclipboard("https://scriptblox.com/u/Bac0nH1ckOff")
+    end
+}
+CreditTab:CreateParagraph("telegram", {Title = "Telegram Channel:", Content = ""})
+CreditTab:CreateButton {
+    Title = "Link: t.me/arceusxscripts",
+    Callback = function()
+        setclipboard("https://t.me/arceusxscripts")
+    end
+}
