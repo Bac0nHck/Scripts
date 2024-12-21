@@ -1,0 +1,65 @@
+ local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+
+local function createUIElement(class, properties, parent)
+	local element = Instance.new(class)
+	for prop, value in pairs(properties) do
+		element[prop] = value
+	end
+	element.Parent = parent
+	return element
+end
+
+local radarFrame = createUIElement("Frame", {AnchorPoint = Vector2.new(0.5, 0.5),Position = UDim2.new(0.9, 0, 0.1, 0),Size = UDim2.new(0, 250, 0, 250),BackgroundColor3 = Color3.new(0, 0, 0),BackgroundTransparency = 0.5,BorderSizePixel = 0,ClipsDescendants = true}, gui)
+createUIElement("UICorner", { CornerRadius = UDim.new(1, 0) }, radarFrame)
+
+local coordLabel = createUIElement("TextLabel", {AnchorPoint = Vector2.new(0.5, 0),Position = UDim2.new(0.9, 0, 0.275, 0),Size = UDim2.new(0, 250, 0, 20),BackgroundTransparency = 1,TextScaled = true,TextColor3 = Color3.new(1, 1, 1),TextStrokeTransparency = 0.8,Font = Enum.Font.Cartoon,Text = "Coordinates: (0, 0, 0)"}, gui)
+
+local blipCache = {}
+
+local function updateRadar()
+	local localChar = LocalPlayer.Character
+	local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+	if not localRoot then return end
+
+	coordLabel.Text = string.format("Coordinates: (%.1f, %.1f, %.1f)", localRoot.Position.X, localRoot.Position.Y, localRoot.Position.Z)
+	local activePlayers = {}
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if root then
+			local dist = (root.Position - localRoot.Position).Magnitude
+			if dist <= 100 or player == LocalPlayer then
+				local relPos = (root.Position - localRoot.Position)
+				local x, z = relPos.X, relPos.Z
+				local blip = blipCache[player]
+
+				if not blip then
+					blip = {frame = createUIElement("Frame", {AnchorPoint = Vector2.new(0.5, 0.5),Size = UDim2.new(0, 10, 0, 10),BorderSizePixel = 0,ZIndex = 2}, radarFrame),label = createUIElement("TextLabel", {AnchorPoint = Vector2.new(0.5, 0),Size = UDim2.new(0, 50, 0, 15),BackgroundTransparency = 1,TextScaled = true,TextColor3 = Color3.new(1, 1, 1),TextStrokeTransparency = 0.8,ZIndex = 3,Font = Enum.Font.SourceSans,Text = player.Name}, radarFrame)}
+					createUIElement("UICorner", { CornerRadius = UDim.new(1, 0) }, blip.frame)
+					blipCache[player] = blip
+				end
+
+				blip.frame.BackgroundColor3 = player == LocalPlayer and Color3.new(0, 1, 0) or Color3.new(1, 0, 0)
+				blip.frame.Position = UDim2.new(0.5, x, 0.5, z)
+				blip.label.Position = UDim2.new(0.5, x, 0.5, z - 15)
+				activePlayers[player] = true
+			end
+		end
+	end
+
+	for player, blip in pairs(blipCache) do
+		if not activePlayers[player] then
+			blip.frame:Destroy()
+			blip.label:Destroy()
+			blipCache[player] = nil
+		end
+	end
+end
+
+RunService.RenderStepped:Connect(updateRadar)
+
+-- // t.me/arceusxscripts
