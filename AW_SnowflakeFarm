@@ -1,0 +1,54 @@
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("AW | Snowflake Farm")
+
+local plr = game:GetService("Players").LocalPlayer
+local char = plr.Character or plr.CharacterAdded:Wait()
+local humPart = char:WaitForChild("HumanoidRootPart")
+
+getgenv().farm = false
+w:Toggle("Auto Collect Snowflake", farm, function (bool)
+    farm = bool
+    if farm then
+        while farm do
+            for _,s in pairs(workspace:GetChildren()) do
+                if not farm then break end
+                if s.Name == "Tiny Snowflake" then
+                    firetouchinterest(s.Union, humPart, 0)
+                    firetouchinterest(s.Union, humPart, 1)
+                end
+            end
+            wait(.6)
+        end
+    end
+end)
+w:Button("Safe Zone", function ()
+    local zone = workspace:FindFirstChild("SafeZone") or (function ()
+        local newZone = Instance.new("Part", workspace)
+        newZone.Name = "SafeZone"
+        newZone.Size = Vector3.new(7,1,7)
+        newZone.Anchored = true
+        newZone.CFrame = CFrame.new(1000,1000,1000)
+        return newZone
+    end)()
+
+    humPart.CFrame = zone.CFrame * CFrame.new(0,3,0)
+end)
+w:Button("Anti AFK", function ()
+    local GC = getconnections or get_signal_cons
+    if GC then
+        for i,v in pairs(GC(plr.Idled)) do
+			if v["Disable"] then
+				v["Disable"](v)
+			elseif v["Disconnect"] then
+				v["Disconnect"](v)
+			end
+		end
+    else
+        local VirtualUser = game:GetService("VirtualUser")
+		plr.Idled:Connect(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new())
+		end)
+    end
+end)
+w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
