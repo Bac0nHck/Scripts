@@ -2,7 +2,7 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
 local w = lib:Window("B&B")
 
-getgenv().settings = {aura = false, box = false, crate = false}
+getgenv().settings = {aura = false, box = false, crate = false, farm = false}
 
 local players = game:GetService("Players")
 local plr = players.LocalPlayer
@@ -87,6 +87,29 @@ w:Toggle(
                 crateName
             )
             wait(.6)
+        end
+    end
+)
+w:Button(
+    "Anti AFK",
+    function()
+        local GC = getconnections or get_signal_cons
+        if GC then
+            for i, v in pairs(GC(plr.Idled)) do
+                if v["Disable"] then
+                    v["Disable"](v)
+                elseif v["Disconnect"] then
+                    v["Disconnect"](v)
+                end
+            end
+        else
+            local VirtualUser = game:GetService("VirtualUser")
+            plr.Idled:Connect(
+                function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end
+            )
         end
     end
 )
