@@ -1,0 +1,92 @@
+-- https://www.roblox.com/games/117701570624742/Blades-Buffoonery
+local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+local w = lib:Window("B&B")
+
+getgenv().settings = {aura = false, box = false, crate = false}
+
+local players = game:GetService("Players")
+local plr = players.LocalPlayer
+
+local function hit(player)
+    local args = {
+        [1] = player.Character.Humanoid
+    }
+    local tool = plr.Character and plr.Character:FindFirstChildOfClass("Tool")
+    if tool and tool:FindFirstChild("Events") and tool.Events:FindFirstChild("Hit") then
+        tool.Events.Hit:FireServer(unpack(args))
+    end
+end
+
+w:Toggle(
+    "Hit Aura",
+    settings.aura,
+    function(bool)
+        settings.aura = bool
+        while kill do
+            for _, p in pairs(players:GetPlayers()) do
+                if not settings.aura then
+                    break
+                end
+                if p ~= plr then
+                    pcall(
+                        function()
+                            hit(p)
+                        end
+                    )
+                end
+            end
+            wait(.6)
+        end
+    end
+)
+w:Toggle(
+    "Open Boxes",
+    settings.box,
+    function(bool)
+        settings.box = bool
+        while settings.box do
+            for _, b in pairs(workspace:FindFirstChild("BoxPositions"):GetDescendants()) do
+                if not settings.box then
+                    break
+                end
+                pcall(
+                    function()
+                        if b:IsA("Model") and b.Parent and b.Parent.Name == "boxpos" then
+                            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BoxEvent"):FireServer(
+                                b
+                            )
+                        end
+                    end
+                )
+            end
+            wait(.6)
+        end
+    end
+)
+local crateName = nil
+w:Dropdown(
+    "Crates",
+    {"Basic", "Cool"},
+    function(name)
+        crateName = name
+    end
+)
+w:Button(
+    "Open Crate",
+    function()
+        game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BuyCrate"):FireServer(crateName)
+    end
+)
+w:Toggle(
+    "Auto Open Crate",
+    settings.crate,
+    function(bool)
+        settings.crate = bool
+        while settings.crate do
+            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BuyCrate"):FireServer(
+                crateName
+            )
+            wait(.6)
+        end
+    end
+)
