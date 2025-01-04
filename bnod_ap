@@ -25,6 +25,11 @@ end)
 
 -- Auto Collect
 while getgenv().auto_collect do
+    -- reset if you are a sheriff
+    if plr.Team and plr.Team.Name == "Sheriffs" then
+        char:FindFirstChildWhichIsA("Humanoid").Health = 0
+    end
+
     for _, p in pairs(collect:GetChildren()) do
         if not getgenv().auto_collect then break end
         if string.find(p.Name, "Peppermint") then
