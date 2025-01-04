@@ -1,0 +1,38 @@
+-- getgenv().auto_collect = true
+
+local plr = game:GetService("Players").LocalPlayer
+
+local function getCharacter()
+    local char = plr.Character or plr.CharacterAdded:Wait()
+    local humPart = char:WaitForChild("HumanoidRootPart")
+    return char, humPart
+end
+
+local char, humPart = getCharacter()
+
+plr.CharacterAdded:Connect(function()
+    char, humPart = getCharacter()
+end)
+
+local collect = workspace:FindFirstChild("CollectableItems")
+
+-- Anti Afk
+local bb = game:GetService("VirtualUser")
+game:service "Players".LocalPlayer.Idled:connect(function()
+    bb:CaptureController()
+    bb:ClickButton2(Vector2.new())
+end)
+
+-- Auto Collect
+while getgenv().auto_collect do
+    for _, p in pairs(collect:GetChildren()) do
+        if not getgenv().auto_collect then break end
+        if string.find(p.Name, "Peppermint") then
+            humPart.CFrame = p.CFrame
+            wait(1)
+            char:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+            wait(1)
+        end
+    end
+    wait(1)
+end
