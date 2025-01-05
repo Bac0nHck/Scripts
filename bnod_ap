@@ -34,7 +34,7 @@ while getgenv().auto_collect do
         if not getgenv().auto_collect then break end
         if string.find(p.Name, "Peppermint") then
             humPart.CFrame = p.CFrame
-            wait(1)
+            wait(.5)
             char:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
             wait(1)
         end
