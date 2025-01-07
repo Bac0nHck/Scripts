@@ -1,5 +1,7 @@
 -- // t.me/arceusxscripts
 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local lib = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
 local SaveManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/SaveManager.luau"))()
 local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
@@ -46,6 +48,14 @@ plr.CharacterAdded:Connect(function()
 end)
 
 local collect = workspace:FindFirstChild("CollectableItems")
+
+local TeleportCheck = false
+plr.OnTeleport:Connect(function(State)
+	if queueteleport and (not TeleportCheck) then
+        TeleportCheck = true
+		queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))(")
+	end
+end)
 
 -- Anti AFK
 local bb = game:GetService("VirtualUser")
@@ -187,14 +197,6 @@ local hopParagraph = Tabs.Main:CreateParagraph("AutoHop", {
     Title = "^ If there are less than 3 players on the server",
     Content = ""
 })
-
-local TeleportCheck = false
-plr.OnTeleport:Connect(function(State)
-	if queueteleport and (not TeleportCheck) then
-        TeleportCheck = true
-		queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))(")
-	end
-end)
 
 Window:SelectTab(1)
 
