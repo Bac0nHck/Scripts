@@ -45,16 +45,19 @@ local char, humPart = getCharacter()
 
 plr.CharacterAdded:Connect(function()
     char, humPart = getCharacter()
+    if queueteleport then
+        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))()")
+    end
 end)
 
 local collect = workspace:FindFirstChild("CollectableItems")
 
 local TeleportCheck = false
 plr.OnTeleport:Connect(function(State)
-	if queueteleport and (not TeleportCheck) then
+    if queueteleport and (not TeleportCheck) then
         TeleportCheck = true
-		queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))(")
-	end
+        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))()")
+    end
 end)
 
 -- Anti AFK
