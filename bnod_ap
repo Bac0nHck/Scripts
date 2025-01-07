@@ -7,7 +7,7 @@ local SaveManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.
 local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
 
 local Window = lib:CreateWindow{
-    Title = "Be NPC or Die | Peppermint Farm",
+    Title = "Be NPC or Die | Peppermints Farm",
     SubTitle = "by t.me/arceusxscripts",
     TabWidth = 140,
     Size = UDim2.fromOffset(600, 425),
