@@ -45,9 +45,6 @@ local char, humPart = getCharacter()
 
 plr.CharacterAdded:Connect(function()
     char, humPart = getCharacter()
-    if queueteleport then
-        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/bnod_ap'))()")
-    end
 end)
 
 local collect = workspace:FindFirstChild("CollectableItems")
