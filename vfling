@@ -1,0 +1,103 @@
+-- https://scriptblox.com/script/Universal-Script-VFling-27417
+-- Modify by: Bac0nH1ckOff | t.me/arceusxscripts
+
+local vfling = Instance.new("ScreenGui")
+local main = Instance.new("Frame")
+local label = Instance.new("TextLabel")
+local UITextSizeConstraint = Instance.new("UITextSizeConstraint")
+local UIAspectRatioConstraint = Instance.new("UIAspectRatioConstraint")
+local button = Instance.new("TextButton")
+local UITextSizeConstraint_2 = Instance.new("UITextSizeConstraint")
+local UIAspectRatioConstraint_2 = Instance.new("UIAspectRatioConstraint")
+local UIAspectRatioConstraint_3 = Instance.new("UIAspectRatioConstraint")
+local UIAspectRatioConstraint_4 = Instance.new("UIAspectRatioConstraint")
+
+vfling.Name = "vfling"
+vfling.Parent = gethui()
+
+main.Name = "main"
+main.Parent = vfling
+main.BackgroundColor3 = Color3.fromRGB(122, 122, 122)
+main.BackgroundTransparency = 0.350
+main.BorderColor3 = Color3.fromRGB(0, 0, 0)
+main.BorderSizePixel = 0
+main.Position = UDim2.new(0.446812302, 0, 0.491014123, 0)
+main.Size = UDim2.new(0.191618904, 0, 0.13960205, 0)
+main.Active = true
+main.Draggable = true
+
+label.Name = "label"
+label.Parent = main
+label.BackgroundColor3 = Color3.fromRGB(182, 182, 182)
+label.BackgroundTransparency = 0.350
+label.BorderColor3 = Color3.fromRGB(0, 0, 0)
+label.BorderSizePixel = 0
+label.Size = UDim2.new(1, 0, 0.284048349, 0)
+label.Font = Enum.Font.Code
+label.Text = "VFling | t.me/arceusxscripts"
+label.TextColor3 = Color3.fromRGB(0, 0, 0)
+label.TextScaled = true
+label.TextSize = 14.000
+label.TextWrapped = true
+
+UITextSizeConstraint.Parent = label
+UITextSizeConstraint.MaxTextSize = 14
+
+UIAspectRatioConstraint.Parent = label
+UIAspectRatioConstraint.AspectRatio = 12.111
+
+button.Name = "button"
+button.Parent = main
+button.BackgroundColor3 = Color3.fromRGB(182, 182, 182)
+button.BackgroundTransparency = 0.350
+button.BorderColor3 = Color3.fromRGB(0, 0, 0)
+button.BorderSizePixel = 0
+button.Position = UDim2.new(0.0427989624, 0, 0.284048498, 0)
+button.Size = UDim2.new(0.909090936, 0, 0.586206913, 0)
+button.Font = Enum.Font.Code
+button.Text = "Click"
+button.TextColor3 = Color3.fromRGB(0, 0, 0)
+button.TextScaled = true
+button.TextSize = 24.000
+button.TextWrapped = true
+
+UITextSizeConstraint_2.Parent = button
+UITextSizeConstraint_2.MaxTextSize = 24
+
+UIAspectRatioConstraint_2.Parent = button
+UIAspectRatioConstraint_2.AspectRatio = 3.922
+
+UIAspectRatioConstraint_3.Parent = main
+UIAspectRatioConstraint_3.AspectRatio = 2.529
+
+UIAspectRatioConstraint_4.Parent = vfling
+UIAspectRatioConstraint_4.AspectRatio = 1.792
+
+local players = game:GetService("Players")
+local plr = players.LocalPlayer
+
+local V9E9 = Vector3.one * 9e9
+local V31 = Vector3.one * 31
+
+local function KVYGAY_fake_script()
+	local script = Instance.new('Script', button)
+
+	script.Parent.MouseButton1Click:Connect(function()
+		local Seat = plr.Character:FindFirstChildOfClass("Humanoid") and plr.Character:FindFirstChildOfClass("Humanoid").SeatPart
+        if not Seat then return end
+		local Part = plr.Character:FindFirstChild("HumanoidRootPart")
+
+		local Velocity = Instance.new("BodyVelocity")
+		Velocity.P = 1e6
+		Velocity.MaxForce = Vector3.one * 1e6
+		Velocity.Velocity = V9E9
+		Velocity.Parent = Seat
+
+		game:GetService("RunService").Heartbeat:Connect(function(deltaTime)
+			Seat.Velocity = V31
+
+			Seat.CFrame = Part.CFrame
+		end)
+	end)
+end
+coroutine.wrap(KVYGAY_fake_script)()
