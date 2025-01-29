@@ -22,40 +22,44 @@ local function serverhop()
         return false
     end
 
-    local success, req = pcall(httprequest, {
-        Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true", PlaceId)
-    })
+    while true do
+        local success, req = pcall(httprequest, {
+            Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true", PlaceId)
+        })
 
-    if not success or not req or not req.Body then
-        notif("Failed to fetch server list.")
-        return false
-    end
+        if not success or not req or not req.Body then
+            notif("Failed to fetch server list. Retrying in 5 seconds...")
+            wait(5)
+            continue
+        end
 
-    local body = HttpService:JSONDecode(req.Body)
-    local servers = {}
+        local body = HttpService:JSONDecode(req.Body)
+        local servers = {}
 
-    if body and body.data then
-        for _, v in pairs(body.data) do
-            if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
-                table.insert(servers, v.id)
+        if body and body.data then
+            for _, v in pairs(body.data) do
+                if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                    table.insert(servers, v.id)
+                end
             end
         end
-    end
 
-    if #servers > 0 then
-        local serverId = servers[math.random(1, #servers)]
-        local teleportSuccess, teleportError = pcall(function()
-            TeleportService:TeleportToPlaceInstance(PlaceId, serverId, plr)
-        end)
+        if #servers > 0 then
+            local serverId = servers[math.random(1, #servers)]
+            local teleportSuccess, teleportError = pcall(function()
+                TeleportService:TeleportToPlaceInstance(PlaceId, serverId, plr)
+            end)
 
-        if not teleportSuccess then
-            notif("Teleport failed. Retrying...")
-            return false
+            if teleportSuccess then
+                return true
+            else
+                notif("Teleport failed. Retrying in 5 seconds...")
+                wait(5)
+            end
+        else
+            notif("No available servers found. Retrying in 5 seconds...")
+            wait(5)
         end
-        return true
-    else
-        notif("No available servers found.")
-        return false
     end
 end
 
