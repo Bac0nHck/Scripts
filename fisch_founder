@@ -1,0 +1,71 @@
+local plr = game:GetService("Players").LocalPlayer
+local queueteleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+
+local PlaceId = game.PlaceId
+local JobId = game.JobId
+
+local TeleportCheck = false
+plr.OnTeleport:Connect(function(State)
+    if queueteleport and (not TeleportCheck) then
+        TeleportCheck = true
+        queueteleport("...")
+    end
+end)
+
+local function notif(msg)
+    game:GetService("StarterGui"):SetCore('SendNotification', {
+        Title = 'Notification',
+        Text = msg,
+        Duration = 5
+    })
+end
+
+local function serverhop()
+    if not httprequest then
+        return
+    end
+
+    local servers = {}
+    local success, req = pcall(function()
+        return httprequest({
+            Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true", PlaceId)
+        })
+    end)
+
+    if not success or not req or not req.Body then
+        return
+    end
+
+    local body = HttpService:JSONDecode(req.Body)
+
+    if body and body.data then
+        for i, v in next, body.data do
+            if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                table.insert(servers, 1, v.id)
+            end
+        end
+    end
+
+    if #servers > 0 then
+        TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], plr)
+    else
+        notif("No available servers found.")
+    end
+end
+
+if game.PlaceVersion ~= 3754 then
+    if queueteleport then
+        notif("Switching server...")
+        wait(1)
+        serverhop()
+    else
+        notif("queue_on_teleport not found!")
+        wait(1)
+        serverhop()
+    end
+else
+    notif("Server found!")
+end
