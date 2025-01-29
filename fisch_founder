@@ -1,7 +1,6 @@
 repeat wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
 
 local plr = game:GetService("Players").LocalPlayer
-local queueteleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
@@ -58,10 +57,6 @@ local function serverhop()
         notif("No available servers found.")
         return false
     end
-end
-
-if queueteleport then
-    queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/fisch_founder'))()")
 end
 
 if (game.PlaceVersion == 3754) or (game.PlaceVersion == 3783) then
