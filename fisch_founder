@@ -1,3 +1,5 @@
+repeat wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
+
 local plr = game:GetService("Players").LocalPlayer
 local queueteleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
@@ -6,14 +8,6 @@ local TeleportService = game:GetService("TeleportService")
 
 local PlaceId = game.PlaceId
 local JobId = game.JobId
-
-local TeleportCheck = false
-plr.OnTeleport:Connect(function(State)
-    if queueteleport and (not TeleportCheck) then
-        TeleportCheck = true
-        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/fisch_founder'))()")
-    end
-end)
 
 local function notif(msg)
     game:GetService("StarterGui"):SetCore('SendNotification', {
@@ -25,47 +19,56 @@ end
 
 local function serverhop()
     if not httprequest then
-        return
+        notif("HTTP request function not found!")
+        return false
     end
 
-    local servers = {}
-    local success, req = pcall(function()
-        return httprequest({
-            Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true", PlaceId)
-        })
-    end)
+    local success, req = pcall(httprequest, {
+        Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true", PlaceId)
+    })
 
     if not success or not req or not req.Body then
-        return
+        notif("Failed to fetch server list.")
+        return false
     end
 
     local body = HttpService:JSONDecode(req.Body)
+    local servers = {}
 
     if body and body.data then
-        for i, v in next, body.data do
+        for _, v in pairs(body.data) do
             if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
-                table.insert(servers, 1, v.id)
+                table.insert(servers, v.id)
             end
         end
     end
 
     if #servers > 0 then
-        TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], plr)
+        local serverId = servers[math.random(1, #servers)]
+        local teleportSuccess, teleportError = pcall(function()
+            TeleportService:TeleportToPlaceInstance(PlaceId, serverId, plr)
+        end)
+
+        if not teleportSuccess then
+            notif("Teleport failed. Retrying...")
+            return false
+        end
+        return true
     else
         notif("No available servers found.")
+        return false
     end
 end
 
-if game.PlaceVersion ~= 3754 then
-    if queueteleport then
-        notif("Switching server...")
+if queueteleport then
+    queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/fisch_founder'))()")
+end
+
+if (game.PlaceVersion == 3754) or (game.PlaceVersion == 3783) then
+    notif("Switching server...")
+    repeat
         wait(1)
-        serverhop()
-    else
-        notif("queue_on_teleport not found!")
-        wait(1)
-        serverhop()
-    end
-else
+    until serverhop()
+elseif (game.PlaceVersion == 3750) then
     notif("Server found!")
 end
