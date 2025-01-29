@@ -68,7 +68,11 @@ if (game.PlaceVersion == 3754) or (game.PlaceVersion == 3783) then
     notif("Switching server...")
     repeat
         wait(1)
-    until serverhop()
+        local success = serverhop()
+        if not success then
+            wait(5)
+        end
+    until success
 elseif (game.PlaceVersion == 3750) then
     notif("Server found!")
 end
