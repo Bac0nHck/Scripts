@@ -11,7 +11,7 @@ local TeleportCheck = false
 plr.OnTeleport:Connect(function(State)
     if queueteleport and (not TeleportCheck) then
         TeleportCheck = true
-        queueteleport("...")
+        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/fisch_founder'))()")
     end
 end)
 
