@@ -1,0 +1,38 @@
+ -- https://scriptblox.com/script/Universal-Script-FE-FACEBANG-28199
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/AKadminlol/Facefuck/refs/heads/main/CreditsbyAK"))()
+-- Mobile Button
+local UserInputService = game:GetService("UserInputService")
+if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+	local gui = Instance.new("ScreenGui")
+	local button = Instance.new("TextButton")
+	local UICorner = Instance.new("UICorner")
+	local UITextSizeConstraint = Instance.new("UITextSizeConstraint")
+	gui.Name = "gui"
+	gui.Parent = gethui()
+	button.Name = "button"
+	button.Parent = gui
+	button.BackgroundColor3 = Color3.fromRGB(33, 33, 33)
+	button.BackgroundTransparency = 0.400
+	button.BorderColor3 = Color3.fromRGB(0, 0, 0)
+	button.BorderSizePixel = 0
+	button.Position = UDim2.new(0.237285092, 0, 0.2342747, 0)
+	button.Size = UDim2.new(0.0447707735, 0, 0.0802310631, 0)
+	button.Font = Enum.Font.SourceSans
+	button.Text = "+"
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.TextScaled = true
+	button.TextSize = 14.000
+	button.TextWrapped = true
+	UICorner.CornerRadius = UDim.new(0, 5)
+	UICorner.Parent = button
+	UITextSizeConstraint.Parent = button
+	UITextSizeConstraint.MaxTextSize = 49
+	local function SVIB_fake_script()
+		local script = Instance.new('LocalScript', button)
+		script.Parent.MouseButton1Click:Connect(function()
+			game:GetService("VirtualInputManager"):SendKeyEvent(true, "Z" , false , game)
+		end)
+	end
+	coroutine.wrap(SVIB_fake_script)()
+end
