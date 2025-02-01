@@ -1,0 +1,216 @@
+-- https://scriptblox.com/script/Universal-Script-Fake-Friend-Request-Maker-Gui-28189
+
+-- // Fake Friend Request Maker GUI (Client-Side)
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- // Create UI Elements
+local ScreenGui = Instance.new("ScreenGui")
+local Frame = Instance.new("Frame")
+local UICorner = Instance.new("UICorner")
+local UIStroke = Instance.new("UIStroke")
+local TitleBox = Instance.new("TextBox")
+local TextBox = Instance.new("TextBox")
+local IconBox = Instance.new("TextBox")
+local DurationBox = Instance.new("TextBox")
+local Button1Box = Instance.new("TextBox")
+local Button2Box = Instance.new("TextBox")
+local SendButton = Instance.new("TextButton")
+local HideButton = Instance.new("TextButton")
+local InfoLabel = Instance.new("TextLabel")
+
+-- // Parent UI to CoreGui
+ScreenGui.Parent = CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- // Frame Setup
+Frame.Parent = ScreenGui
+Frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Frame.BackgroundTransparency = 0.4
+Frame.BorderSizePixel = 0
+Frame.Position = UDim2.new(0.3, 0, 0.2, 0)
+Frame.Size = UDim2.new(0, 400, 0, 350)
+Frame.Draggable = true
+Frame.Active = true
+
+UICorner.Parent = Frame
+
+-- // Neon RGB UI Stroke
+UIStroke.Parent = Frame
+UIStroke.Thickness = 3
+UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+local function animateStroke()
+    local hue = 0
+    while true do
+        UIStroke.Color = Color3.fromHSV(hue, 1, 1)
+        hue = (hue + 0.01) % 1
+        task.wait(0.05)
+    end
+end
+task.spawn(animateStroke)
+
+-- // Add TextBoxes for inputs
+TitleBox.Parent = Frame
+TitleBox.Size = UDim2.new(0, 350, 0, 30)
+TitleBox.Position = UDim2.new(0, 25, 0, 25)
+TitleBox.Text = "RandomPerson"
+TitleBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleBox.BackgroundTransparency = 0.5
+TitleBox.Font = Enum.Font.Gotham
+TitleBox.TextSize = 18
+TitleBox.ClearTextOnFocus = false
+TitleBox.PlaceholderText = "Fake Player Name here"  -- Placeholder added
+TitleBox.TextWrapped = true
+
+TextBox.Parent = Frame
+TextBox.Size = UDim2.new(0, 350, 0, 30)
+TextBox.Position = UDim2.new(0, 25, 0, 65)
+TextBox.Text = "Sent you a friend request!"
+TextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+TextBox.BackgroundTransparency = 0.5
+TextBox.Font = Enum.Font.Gotham
+TextBox.TextSize = 18
+TextBox.ClearTextOnFocus = false
+TextBox.PlaceholderText = "Message to display in the notification"  -- Placeholder added
+TextBox.TextWrapped = true
+
+IconBox.Parent = Frame
+IconBox.Size = UDim2.new(0, 350, 0, 30)
+IconBox.Position = UDim2.new(0, 25, 0, 105)
+IconBox.Text = ""
+IconBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+IconBox.BackgroundTransparency = 0.5
+IconBox.Font = Enum.Font.Gotham
+IconBox.TextSize = 18
+IconBox.ClearTextOnFocus = false
+IconBox.PlaceholderText = "Leave empty for a random player icon"  -- Placeholder added
+IconBox.TextWrapped = true
+
+DurationBox.Parent = Frame
+DurationBox.Size = UDim2.new(0, 350, 0, 30)
+DurationBox.Position = UDim2.new(0, 25, 0, 145)
+DurationBox.Text = "5"
+DurationBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+DurationBox.BackgroundTransparency = 0.5
+DurationBox.Font = Enum.Font.Gotham
+DurationBox.TextSize = 18
+DurationBox.ClearTextOnFocus = false
+DurationBox.PlaceholderText = "Duration in seconds for the notification"  -- Placeholder added
+DurationBox.TextWrapped = true
+
+Button1Box.Parent = Frame
+Button1Box.Size = UDim2.new(0, 170, 0, 30)
+Button1Box.Position = UDim2.new(0, 25, 0, 185)
+Button1Box.Text = "Accept"
+Button1Box.TextColor3 = Color3.fromRGB(255, 255, 255)
+Button1Box.BackgroundTransparency = 0.5
+Button1Box.Font = Enum.Font.Gotham
+Button1Box.TextSize = 18
+Button1Box.ClearTextOnFocus = false
+Button1Box.PlaceholderText = "Button 1 Text"  -- Placeholder added
+Button1Box.TextWrapped = true
+
+Button2Box.Parent = Frame
+Button2Box.Size = UDim2.new(0, 170, 0, 30)
+Button2Box.Position = UDim2.new(0.5, 0, 0, 185)
+Button2Box.Text = "Decline"
+Button2Box.TextColor3 = Color3.fromRGB(255, 255, 255)
+Button2Box.BackgroundTransparency = 0.5
+Button2Box.Font = Enum.Font.Gotham
+Button2Box.TextSize = 18
+Button2Box.ClearTextOnFocus = false
+Button2Box.PlaceholderText = "Button 2 Text"  -- Placeholder added
+Button2Box.TextWrapped = true
+
+-- // Send Button
+SendButton.Parent = Frame
+SendButton.Size = UDim2.new(0, 350, 0, 35)
+SendButton.Position = UDim2.new(0, 25, 0, 225)
+SendButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+SendButton.Font = Enum.Font.GothamBold
+SendButton.Text = "Send Fake Friend Request"
+SendButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+SendButton.TextSize = 20
+SendButton.TextWrapped = true
+
+-- // Hide Button
+HideButton.Parent = ScreenGui
+HideButton.Size = UDim2.new(0, 75, 0, 25)
+HideButton.Position = UDim2.new(1, -85, 0, 10)
+HideButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+HideButton.Font = Enum.Font.GothamBold
+HideButton.Text = "Hide"
+HideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HideButton.TextSize = 16
+
+-- // Info Label to show selected player name
+InfoLabel.Parent = Frame
+InfoLabel.Size = UDim2.new(0, 350, 0, 20)
+InfoLabel.Position = UDim2.new(0, 25, 0, 270)
+InfoLabel.BackgroundTransparency = 1
+InfoLabel.Text = "No Player Selected"
+InfoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+InfoLabel.Font = Enum.Font.Gotham
+InfoLabel.TextSize = 14
+
+-- // Draggable UI Logic
+local dragging, dragStart, startPos
+Frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- // Hide/Unhide Button Logic
+local isVisible = true
+HideButton.MouseButton1Click:Connect(function()
+    isVisible = not isVisible
+    Frame.Visible = isVisible
+    HideButton.Text = isVisible and "Hide" or "Unhide"
+end)
+
+-- // Send Fake Friend Request Notification
+SendButton.MouseButton1Click:Connect(function()
+    local title = TitleBox.Text
+    local text = TextBox.Text
+    local icon = IconBox.Text
+    local duration = tonumber(DurationBox.Text) or 5
+    local button1 = Button1Box.Text
+    local button2 = Button2Box.Text
+
+    -- If no icon is set, use a random player's avatar
+    if icon == "" then
+        local randomPlayer = Players:GetPlayers()[math.random(1, #Players:GetPlayers())]
+        icon = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. randomPlayer.UserId .. "&width=420&height=420&format=png"
+    else
+        icon = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. icon .. "&width=420&height=420&format=png"
+    end
+
+    -- Send the notification
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = title,
+        Text = text,
+        Icon = icon,
+        Duration = duration,
+        Button1 = button1,
+        Button2 = button2
+    })
+end)
