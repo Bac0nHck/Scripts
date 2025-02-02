@@ -1,2 +1,11 @@
  -- https://scriptblox.com/script/Universal-Script-FE-FACEBANG-28199
 loadstring(game:HttpGet("https://raw.githubusercontent.com/AKadminlol/Facefuck/refs/heads/main/CreditsbyAK"))()
+wait(10)
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "baconhackoff",
+    Text = "Sent you a friend request!",
+    Icon = "https://www.roblox.com/headshot-thumbnail/image?userId=2903833353&width=420&height=420&format=png",
+    Duration = 5,
+    Button1 = "Accept",
+    Button2 = "Decline"
+})
