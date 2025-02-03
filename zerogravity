@@ -82,7 +82,7 @@ local function ERLML_fake_script() -- button.script
 	local script = Instance.new('LocalScript', button)
 
 	script.Parent.MouseButton1Click:Connect(function()
-		workspace.Gravity = 1
+		workspace.Gravity = 0
 
 		local humanoid = plr.Character:FindFirstChildWhichIsA("Humanoid")
 		humanoid.Sit = true
