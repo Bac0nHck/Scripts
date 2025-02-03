@@ -37,7 +37,7 @@ main.BackgroundColor3 = Color3.fromRGB(72, 72, 72)
 main.BorderColor3 = Color3.fromRGB(0, 0, 0)
 main.BorderSizePixel = 0
 main.Position = UDim2.new(0.196095973, 0, 0.556803584, 0)
-main.Size = UDim2.new(0.123567328, 0, 0.0930680335, 0)
+main.Size = UDim2.new(0.178187668, 0, 0.13960205, 0)
 main.Active = true
 main.Draggable = true
 
@@ -68,6 +68,7 @@ button.Font = Enum.Font.Gotham
 button.Text = "Click"
 button.TextColor3 = Color3.fromRGB(255, 255, 255)
 button.TextSize = 24.000
+button.TextScaled = true
 button.TextWrapped = true
 
 UITextSizeConstraint_2.Parent = button
@@ -78,7 +79,7 @@ UITextSizeConstraint_2.MaxTextSize = 31
 local plr = game:GetService("Players").LocalPlayer
 local normalGravity = workspace.Gravity
 
-local function ERLML_fake_script() -- button.script 
+local function MUBRZ_fake_script() -- button.script 
 	local script = Instance.new('LocalScript', button)
 
 	script.Parent.MouseButton1Click:Connect(function()
@@ -97,4 +98,4 @@ local function ERLML_fake_script() -- button.script
 		workspace.Gravity = normalGravity
 	end)
 end
-coroutine.wrap(ERLML_fake_script)()
+coroutine.wrap(MUBRZ_fake_script)()
