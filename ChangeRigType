@@ -1,0 +1,36 @@
+-- // t.me/arceusxscripts
+
+local Players = game:GetService("Players")
+local AvatarEditor = game:GetService("AvatarEditorService")
+local plr = Players.LocalPlayer
+
+local function ExecuteRigChange(rigType)
+    local char = plr.Character or plr.CharacterAdded:Wait()
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    local desc = humanoid.HumanoidDescription and humanoid.HumanoidDescription:Clone()
+    if not desc then return end
+    
+    AvatarEditor:PromptSaveAvatar(desc, Enum.HumanoidRigType[rigType])
+    
+    if AvatarEditor.PromptSaveAvatarCompleted:Wait() == Enum.AvatarPromptResult.Success then
+        humanoid.Health = 0
+        humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+        
+        local newChar = plr.CharacterAdded:Wait()
+        task.wait(1)
+        
+        local newHumanoid = newChar:FindFirstChildOfClass("Humanoid")
+        if newHumanoid then
+            newHumanoid:ApplyDescription(desc)
+            newHumanoid:BuildRigFromDescription(desc, Enum.HumanoidRigType[rigType])
+        end
+    end
+end
+
+local char = plr.Character or plr.CharacterAdded:Wait()
+local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+if humanoid and humanoid.RigType then
+    ExecuteRigChange(humanoid.RigType == Enum.HumanoidRigType.R15 and "R6" or "R15")
+end
