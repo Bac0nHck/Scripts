@@ -1,32 +1,35 @@
+-- getgenv().lastPos = true -- false/true
 -- // t.me/arceusxscripts
 
 local Players = game:GetService("Players")
 local AvatarEditor = game:GetService("AvatarEditorService")
 local plr = Players.LocalPlayer
+local pos
 
 local function ExecuteRigChange(rigType)
-    local char = plr.Character or plr.CharacterAdded:Wait()
-    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    local desc = humanoid.HumanoidDescription and humanoid.HumanoidDescription:Clone()
-    if not desc then return end
-    
-    AvatarEditor:PromptSaveAvatar(desc, Enum.HumanoidRigType[rigType])
-    
-    if AvatarEditor.PromptSaveAvatarCompleted:Wait() == Enum.AvatarPromptResult.Success then
-        humanoid.Health = 0
-        humanoid:ChangeState(Enum.HumanoidStateType.Dead)
-        
-        local newChar = plr.CharacterAdded:Wait()
-        task.wait(1)
-        
-        local newHumanoid = newChar:FindFirstChildOfClass("Humanoid")
-        if newHumanoid then
-            newHumanoid:ApplyDescription(desc)
-            newHumanoid:BuildRigFromDescription(desc, Enum.HumanoidRigType[rigType])
+    pcall(function()
+        local char = plr.Character or plr.CharacterAdded:Wait()
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+
+        local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 5)
+        if hrp and lastPos then pos = hrp.CFrame end
+
+        local desc = humanoid.HumanoidDescription and humanoid.HumanoidDescription:Clone()
+        if not desc then return end
+
+        AvatarEditor:PromptSaveAvatar(desc, Enum.HumanoidRigType[rigType])
+
+        if AvatarEditor.PromptSaveAvatarCompleted:Wait() == Enum.AvatarPromptResult.Success then
+            humanoid.Health = 0
+            humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+
+            local newChar = plr.CharacterAdded:Wait()
+
+            local newHRP = newChar:WaitForChild("HumanoidRootPart", 5)
+            if newHRP and lastPos and pos then newHRP.CFrame = pos end
         end
-    end
+    end)
 end
 
 local char = plr.Character or plr.CharacterAdded:Wait()
