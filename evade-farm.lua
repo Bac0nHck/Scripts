@@ -1,4 +1,4 @@
-getgenv().farm = true -- false/true
+-- getgenv().farm = true -- false/true
 
 -- Made By: Bac0nH1ckOff | a.k.a t.me/arceusxscripts
 local Players = game:GetService("Players")
