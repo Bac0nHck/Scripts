@@ -4,10 +4,9 @@
 local Players = game:GetService("Players")
 local VirtualUser = game:GetService("VirtualUser")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
-local tickets = Workspace:FindFirstChild("Game") and Workspace.Game:FindFirstChild("Effects") and Workspace.Game.Effects:FindFirstChild("Tickets")
+local tickets = game:GetService("Workspace"):FindFirstChild("Game") and game:GetService("Workspace").Game:FindFirstChild("Effects") and game:GetService("Workspace").Game.Effects:FindFirstChild("Tickets")
 
 player.Idled:Connect(function()
     VirtualUser:CaptureController()
