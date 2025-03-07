@@ -2,12 +2,13 @@
           For those who do not want to get banned on the main account (Run this is script on the alt account)
 ]]
 local HttpService = game:GetService("HttpService")
+local request = syn and syn.request or http_request or (http and http.request)
 
 local function sendWeb(color, role, player, icon)
     local OSTime = os.time()
     local Time = os.date('!*t', OSTime)
 
-    syn.request({
+    request({
         Url = _G.webhook,
         Method = 'POST',
         Headers = { ['Content-Type'] = 'application/json' },
