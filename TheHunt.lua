@@ -1,4 +1,7 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
+
+local plr = game:GetService("Players").LocalPlayer
+
 if game.GameId == 6215464786 then -- Chained
     if game.PlaceId == 134363685332033 then
         local w = lib:Window("Chained | The Hunt")
@@ -13,6 +16,22 @@ if game.GameId == 6215464786 then -- Chained
         end)
         w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
     else
-        game:GetService("TeleportService"):Teleport(134363685332033, game:GetService("Players").LocalPlayer.Character)
+        game:GetService("TeleportService"):Teleport(134363685332033, plr.Character)
     end
+elseif game.GameId == 65241 then -- Natural Disasters Survival
+    local bb = game:GetService("VirtualUser") -- Anti Afk
+    plr.Idled:connect(function()
+        bb:CaptureController()
+        bb:ClickButton2(Vector2.new())
+    end)
+    local w = lib:Window("NDS | The Hunt") 
+    w:Toggle("Auto Win", false, function(bool) -- Main Function
+        if bool then
+            while bool do
+                plr.Character.HumanoidRootPart.CFrame = CFrame.new(-282, 157, 339)
+                task.wait()
+            end
+        end
+    end)
+    w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
 end
