@@ -1,10 +1,9 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
-
 local plr = game:GetService("Players").LocalPlayer
-
+local w
 if game.GameId == 6215464786 then -- Chained
     if game.PlaceId == 134363685332033 then
-        local w = lib:Window("Chained | The Hunt")
+        w = lib:Window("Chained | The Hunt")
         w:Label("The script requires a pair", Color3.fromRGB(127, 143, 166))
         w:Button("Instant checkpoints", function ()
             for i = 1, 31 do
@@ -14,7 +13,6 @@ if game.GameId == 6215464786 then -- Chained
                 game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ClaimCheckpoint"):FireServer(unpack(a))
             end
         end)
-        w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
     else
         game:GetService("TeleportService"):Teleport(134363685332033, plr.Character)
     end
@@ -25,7 +23,7 @@ elseif game.GameId == 65241 then -- Natural Disasters Survival
         bb:ClickButton2(Vector2.new())
     end)
     local lastPos
-    local w = lib:Window("NDS | The Hunt") 
+    w = lib:Window("NDS | The Hunt") 
     w:Toggle("Auto Win", false, function(bool)
         getgenv().win = bool
         if getgenv().win then
@@ -38,9 +36,8 @@ elseif game.GameId == 65241 then -- Natural Disasters Survival
             task.wait()
         end
     end)
-    w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
 elseif game.GameId == 4540138978 then -- Metro Life
-    local w = lib:Window("Metro Life | The Hunt")
+    w = lib:Window("Metro Life | The Hunt")
     local hunt = game:GetService("Workspace"):FindFirstChild("Hunt")
     local points_table = {}
 
@@ -67,5 +64,43 @@ elseif game.GameId == 4540138978 then -- Metro Life
         local birthPoint = hunt:FindFirstChild("Birth point")
         plr.Character:FindFirstChild("HumanoidRootPart").CFrame = birthPoint.WorldPivot * CFrame.new(0,10,0)
     end)
-    w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+elseif game.GameId == 3876150506 then -- Drive World
+    w = lib:Window("Obby | The Hunt")
+    local checkpoints = {
+        ["Checkpoint1"] = "3137de",
+        ["Checkpoint2"] = "31378b",
+        ["Checkpoint3"] = "313738",
+        ["Checkpoint4"] = "3137e5",
+        ["Checkpoint5"] = "313792",
+        ["Checkpoint6"] = "31373f",
+        ["Checkpoint7"] = "3137ec",
+        ["Checkpoint8"] = "313799"
+    }
+    w:Dropdown("Corrupted Obby", {"Checkpoint1", "Checkpoint2", "Checkpoint3", "Checkpoint4", "Checkpoint5", "Checkpoint6", "Checkpoint7"}, function (name)
+        local checkpointId = checkpoints[name]
+        if checkpointId then
+            plr.Character.HumanoidRootPart.CFrame = workspace:FindFirstChild("Races"):FindFirstChild("HuntObby1").Checkpoints[checkpointId].WorldPivot
+        end
+    end)
+    w:Dropdown("Fractured Obby", {"Checkpoint1", "Checkpoint2", "Checkpoint3", "Checkpoint4", "Checkpoint5", "Checkpoint6"}, function (name)
+        local checkpointId = checkpoints[name]
+        if checkpointId then
+            plr.Character.HumanoidRootPart.CFrame = workspace:FindFirstChild("Races"):FindFirstChild("HuntObby2").Checkpoints[checkpointId].WorldPivot
+        end
+    end)
+    w:Dropdown("Rifted Obby", {"Checkpoint1", "Checkpoint2", "Checkpoint3", "Checkpoint4", "Checkpoint5"}, function (name)
+        local checkpointId = checkpoints[name]
+        if checkpointId then
+            plr.Character.HumanoidRootPart.CFrame = workspace:FindFirstChild("Races"):FindFirstChild("HuntObby3").Checkpoints[checkpointId].WorldPivot
+        end
+    end)
+    w:Dropdown("Splintered Obby", {"Checkpoint1", "Checkpoint2", "Checkpoint3", "Checkpoint4", "Checkpoint5", "Checkpoint6", "Checkpoint7", "Checkpoint8"}, function (name)
+        local checkpointId = checkpoints[name]
+        if checkpointId then
+            plr.Character.HumanoidRootPart.CFrame = workspace:FindFirstChild("Races"):FindFirstChild("HuntObby4").Checkpoints[checkpointId].WorldPivot
+        end
+    end)
+    w:Label("I recommend waiting 1 minute", Color3.fromRGB(127, 143, 166))
+    w:Label("before finishing the obby", Color3.fromRGB(127, 143, 166))
 end
+w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
