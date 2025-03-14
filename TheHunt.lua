@@ -39,4 +39,33 @@ elseif game.GameId == 65241 then -- Natural Disasters Survival
         end
     end)
     w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
+elseif game.GameId == 4540138978 then -- Metro Life
+    local w = lib:Window("Metro Life | The Hunt")
+    local hunt = game:GetService("Workspace"):FindFirstChild("Hunt")
+    local points_table = {}
+
+    for _, point in pairs(hunt:GetChildren()) do
+        if point.Name:match("^Check in point%d+$") then
+            local lastWord = point.Name:match("point%d+$")
+            if lastWord then
+                table.insert(points_table, lastWord)
+            end
+        end
+    end
+
+    w:Dropdown("Points", points_table, function(name)
+        for _, point in pairs(hunt:GetChildren()) do
+            if string.find(point.Name, name) then
+                local cam = point:FindFirstChild("camera")
+                if cam then
+                    plr.Character:FindFirstChild("HumanoidRootPart").CFrame = cam.WorldPivot * CFrame.new(0,10,0)
+                end
+            end
+        end
+    end)
+    w:Button("Teleport to Hunt NPC", function ()
+        local birthPoint = hunt:FindFirstChild("Birth point")
+        plr.Character:FindFirstChild("HumanoidRootPart").CFrame = birthPoint.WorldPivot * CFrame.new(0,10,0)
+    end)
+    w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
 end
