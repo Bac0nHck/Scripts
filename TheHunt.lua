@@ -19,14 +19,14 @@ if game.GameId == 6215464786 then -- Chained
         game:GetService("TeleportService"):Teleport(134363685332033, plr.Character)
     end
 elseif game.GameId == 65241 then -- Natural Disasters Survival
-    local bb = game:GetService("VirtualUser") -- Anti Afk
+    local bb = game:GetService("VirtualUser")
     plr.Idled:connect(function()
         bb:CaptureController()
         bb:ClickButton2(Vector2.new())
     end)
     local lastPos
     local w = lib:Window("NDS | The Hunt") 
-    w:Toggle("Auto Win", false, function(bool) -- Main Function
+    w:Toggle("Auto Win", false, function(bool)
         getgenv().win = bool
         if getgenv().win then
             lastPos = plr.Character.HumanoidRootPart.CFrame
