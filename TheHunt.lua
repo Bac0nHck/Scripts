@@ -24,13 +24,18 @@ elseif game.GameId == 65241 then -- Natural Disasters Survival
         bb:CaptureController()
         bb:ClickButton2(Vector2.new())
     end)
+    local lastPos
     local w = lib:Window("NDS | The Hunt") 
     w:Toggle("Auto Win", false, function(bool) -- Main Function
-        if bool then
-            while bool do
-                plr.Character.HumanoidRootPart.CFrame = CFrame.new(-282, 157, 339)
-                task.wait()
-            end
+        getgenv().win = bool
+        if getgenv().win then
+            lastPos = plr.Character.HumanoidRootPart.CFrame
+        else
+            plr.Character.HumanoidRootPart.CFrame = lastPos
+        end
+        while getgenv().win do
+            plr.Character.HumanoidRootPart.CFrame = CFrame.new(-282, 157, 339)
+            task.wait()
         end
     end)
     w:Label("By: t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
