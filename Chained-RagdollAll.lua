@@ -15,7 +15,7 @@ w:Toggle("Toggle", false, function(bool)
                 replicatedStorage.Remotes.Ragdoll:FireServer(ohInstance1, ohBoolean2)
             end
         end
-        task.wait()
+        task.wait(.5)
     end
 end)
 w:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
