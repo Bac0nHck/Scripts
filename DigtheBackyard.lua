@@ -295,7 +295,11 @@ Tabs.Teleports:CreateButton{
     end
 }
 
-for _, room in pairs(rooms:GetChildren()) do
+local createdButtons = {}
+
+local function createRoomButton(room)
+    if createdButtons[room.Name] then return end
+
     local part = room:FindFirstChildOfClass("Part")
     if part then
         Tabs.Teleports:CreateButton{
@@ -305,8 +309,18 @@ for _, room in pairs(rooms:GetChildren()) do
                 humPart.CFrame = part.CFrame
             end
         }
+        createdButtons[room.Name] = true
     end
 end
+
+for _, room in pairs(rooms:GetChildren()) do
+    createRoomButton(room)
+end
+
+rooms.ChildAdded:Connect(function(newRoom)
+    task.wait(0.5)
+    createRoomButton(newRoom)
+end)
 
 -- // ESP
 local OresESP = Tabs.Esp:CreateToggle("OresESP", {Title = "Ores ESP", Default = false })
@@ -403,25 +417,7 @@ RoomsESP:OnChanged(function()
     if Options.RoomsESP.Value then
         if rooms then
             for _, room in pairs(rooms:GetChildren()) do
-                if not room:FindFirstChild("ESP") then
-                    local billboard = Instance.new("BillboardGui")
-                    billboard.Name = "ESP"
-                    billboard.Size = UDim2.new(0, 100, 0, 50)
-                    billboard.StudsOffset = Vector3.new(0, 3, 0)
-                    billboard.AlwaysOnTop = true
-                    billboard.Adornee = room
-                    billboard.Parent = room
-
-                    local textLabel = Instance.new("TextLabel")
-                    textLabel.Size = UDim2.new(1, 0, 1, 0)
-                    textLabel.BackgroundTransparency = 1
-                    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-                    textLabel.TextStrokeTransparency = 0
-                    textLabel.Font = Enum.Font.SourceSansBold
-                    textLabel.TextSize = 20
-                    textLabel.Text = room.Name
-                    textLabel.Parent = billboard
-                end
+                createRoomESP(room)
             end
         end
     else
@@ -430,6 +426,34 @@ RoomsESP:OnChanged(function()
                 e:Destroy()
             end
         end 
+    end
+end)
+
+function createRoomESP(room)
+    if not room:FindFirstChild("ESP") then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ESP"
+        billboard.Size = UDim2.new(0, 100, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Adornee = room
+        billboard.Parent = room
+
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, 0, 1, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        textLabel.TextStrokeTransparency = 0
+        textLabel.Font = Enum.Font.SourceSansBold
+        textLabel.TextSize = 20
+        textLabel.Text = room.Name
+        textLabel.Parent = billboard
+    end
+end
+rooms.ChildAdded:Connect(function(newRoom)
+    task.wait(0.5)
+    if Options.RoomsESP.Value then
+        createRoomESP(newRoom)
     end
 end)
 
