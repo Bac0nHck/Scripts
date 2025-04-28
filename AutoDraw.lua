@@ -1,3 +1,14 @@
+-- https://scriptblox.com/script/starving-artists-(DONATION-GAME)-Auto-Draw-Script-37948
+warn([[.
+  _                        __                                             _       _       
+ | |                      / /                                            (_)     | |      
+ | |_   _ __ ___   ___   / /_ _ _ __ ___ ___ _   _ _____  _____  ___ _ __ _ _ __ | |_ ___ 
+ | __| | '_ ` _ \ / _ \ / / _` | '__/ __/ _ \ | | / __\ \/ / __|/ __| '__| | '_ \| __/ __|
+ | |_ _| | | | | |  __// / (_| | | | (_|  __/ |_| \__ \>  <\__ \ (__| |  | | |_) | |_\__ \
+  \__(_)_| |_| |_|\___/_/ \__,_|_|  \___\___|\__,_|___/_/\_\___/\___|_|  |_| .__/ \__|___/
+                                                                           | |            
+                                                                           |_|            
+]])
 local screen = Instance.new("ScreenGui")
 screen.Parent = game:GetService("CoreGui")
 local mainFrameClosed = false
