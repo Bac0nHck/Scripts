@@ -1,7 +1,7 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
 local w = lib:Window("untitled drill game")
 
-getgenv().settings = {drill = false, sell = false, collect = false}
+getgenv().settings = {drill = false, sell = false, collect = false, storage = false}
 local plr = game:GetService("Players").LocalPlayer
 local sellPart = workspace:FindFirstChild("Scripted"):FindFirstChild("Sell")
 local drillsUi = plr.PlayerGui:FindFirstChild("Menu"):FindFirstChild("CanvasGroup").Buy
@@ -99,6 +99,35 @@ w:Toggle(
                                     "Services"
                                 ):WaitForChild("PlotService"):WaitForChild("RE"):WaitForChild("CollectDrill"):FireServer(
                                     drill
+                                )
+                            end
+                        end
+                        task.wait(1)
+                    end
+                end
+            )
+        end
+    end
+)
+
+w:Toggle(
+    "Auto Collect Storage",
+    false,
+    function (bool)
+        settings.storage = bool
+        if settings.storage then
+            task.spawn(
+                function ()
+                    while settings.storage do
+                        if plot and plot:FindFirstChild("Storage") then
+                            for _, storage in pairs(plot.Storage:GetChildren()) do
+                                if not settings.storage then
+                                    break
+                                end
+                                game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild(
+                                    "Services"
+                                ):WaitForChild("PlotService"):WaitForChild("RE"):WaitForChild("CollectDrill"):FireServer(
+                                    storage
                                 )
                             end
                         end
