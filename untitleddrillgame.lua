@@ -1,7 +1,7 @@
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Lib/main/source.lua"))()
 local w = lib:Window("untitled drill game")
 
-getgenv().settings = {drill = false, sell = false, collect = false, storage = false}
+getgenv().settings = {rebith = false, drill = false, sell = false, collect = false, storage = false}
 local plr = game:GetService("Players").LocalPlayer
 local sellPart = workspace:FindFirstChild("Scripted"):FindFirstChild("Sell")
 local drillsUi = plr.PlayerGui:FindFirstChild("Menu"):FindFirstChild("CanvasGroup").Buy
@@ -74,6 +74,24 @@ w:Toggle(
                     while settings.sell do
                         sell()
                         task.wait(10)
+                    end
+                end
+            )
+        end
+    end
+)
+
+w:Toggle(
+    "Auto Rebith",
+    false,
+    function(bool)
+        settings.rebith = bool
+        if settings.rebith then
+            task.spawn(
+                function()
+                    while settings.rebith do
+                        game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("RebirthService"):WaitForChild("RE"):WaitForChild("RebirthRequest"):FireServer()
+                        task.wait(1)
                     end
                 end
             )
