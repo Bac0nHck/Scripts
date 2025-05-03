@@ -1,3 +1,4 @@
+if script_loaded then warn("Script is already loaded, please rejoin the game to load it again.") return end pcall(function() getgenv().script_loaded = true end)
 warn("Loading...")
 local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
 local SaveManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/SaveManager.luau"))()
@@ -378,3 +379,33 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 w:SelectTab(1)
 SaveManager:LoadAutoloadConfig()
 warn("Loaded!")
+
+-- // Support me pls OwO
+local PATH, DIR, URL = "untitleddrillgame/support.txt", "untitleddrillgame", "https://www.roblox.com/games/126923867527251/Support-place"
+local state = isfile(PATH) and readfile(PATH) or "false"
+
+if state ~= "true" then
+    task.wait(math.random(600, 1200))
+
+    w:Dialog{
+        Title = "Support",
+        Content = "Do you want to support me? (A link to the game will be copied to your clipboard)",
+        Buttons = {
+            {
+                Title = "Confirm",
+                Callback = function()
+                    setclipboard(URL)
+                    if not isfolder(DIR) then makefolder(DIR) end
+                    writefile(PATH, "true")
+                end,
+            },
+            {
+                Title = "Cancel",
+                Callback = function()
+                    if not isfolder(DIR) then makefolder(DIR) end
+                    writefile(PATH, "true")
+                end,
+            },
+        },
+    }
+end
