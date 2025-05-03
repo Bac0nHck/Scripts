@@ -208,6 +208,7 @@ Tabs.Main:CreateButton{
 -- // Farm
 local delay = 10
 local autodrill = Tabs.Farm:CreateToggle("autodrill", {Title = "Auto Drill", Default = false })
+local autopickup = Tabs.Farm:CreateToggle("autopickup", {Title = "Auto Drill Pickup", Default = false })
 Tabs.Farm:CreateButton{ Title = "Sell All", Description = "Sell ​​all ores", Callback = function() sell() end } 
 Tabs.Farm:CreateInput("selldelay", {Title="Auto Sell Delay", Default=tostring(delay), Placeholder=tostring(delay), Numeric=true, Finished=true, Callback=function(Value)local num=tonumber(Value) if num and num>=1 then delay=num else Library:Notify{Title="Warning", Content="Only numbers (1+)", Duration=5} end end})
 local autosell = Tabs.Farm:CreateToggle("autosell", {Title = "Auto Sell", Default = false })
@@ -217,13 +218,38 @@ local collectdrills = Tabs.Farm:CreateToggle("collectdrills", {Title = "Auto Col
 local collectstorages = Tabs.Farm:CreateToggle("collectstorage", {Title = "Auto Collect Storages", Default = false })
 Tabs.Farm:CreateParagraph("Paragraph", { Title = "-- Settings --", })
 local drillsfull = Tabs.Farm:CreateToggle("drillsfull", {Title = "If drill is full", Default = false })
-local drillsdelay = Tabs.Farm:CreateToggle("drillsdelay", {Title = "Every ... seconds", Default = false })
+local drillsdelay = Tabs.Farm:CreateToggle("drillsdelay", {Title = "In ... seconds", Default = false })
 local delayDrills = 10
 Tabs.Farm:CreateInput("collectdrillsdelay", {Title="Drills Delay", Default=delayDrills, Placeholder=delayDrills, Numeric=true, Finished=true, Callback=function(Value) local num=tonumber(Value) if num and num>=1 then delayDrills=num else Library:Notify{Title="Warning", Content="Only numbers (1+)", Duration=5} end end})
 local storagesfull = Tabs.Farm:CreateToggle("storagesfull", {Title = "If storage is full", Default = false })
-local storagesdelay = Tabs.Farm:CreateToggle("storagesdelay", {Title = "Every ... seconds", Default = false })
+local storagesdelay = Tabs.Farm:CreateToggle("storagesdelay", {Title = "In ... seconds", Default = false })
 local storDelay = 10
 Tabs.Farm:CreateInput("collectstoragesdelay", {Title="Storages Delay", Default=storDelay, Placeholder=storDelay, Numeric=true, Finished=true, Callback=function(Value) local num=tonumber(Value) if num and num>=1 then storDelay=num else Library:Notify{Title="Warning", Content="Only numbers (1+)", Duration=5} end end})
+
+autopickup:OnChanged(function() -- Options.autopickup.Value
+    if Options.autopickup.Value then
+        task.spawn(function ()
+            while Options.autopickup.Value do
+                local drill = (function ()
+                    for _, obj in pairs(plr.Character:GetChildren()) do
+                        if obj:GetAttribute("Type") == "HandDrill" then
+                            return obj
+                        end
+                    end
+                end)()
+                if not drill then
+                    for _, obj in pairs(plr.Backpack:GetChildren()) do
+                        if obj:GetAttribute("Type") == "HandDrill" then
+                            obj.Parent = plr.Character
+                            break
+                        end
+                    end
+                end
+                task.wait(2)
+            end
+        end)
+    end
+end)
 
 autodrill:OnChanged(function() -- Options.autodrill.Value
     if Options.autodrill.Value then
