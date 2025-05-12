@@ -50,7 +50,7 @@ w:Toggle("Auto Collect Eggs", false, function (val)
 		end)
 	end
 end)
-w:Toggle("Auto Hatch", false, function (val)
+w:Toggle("Auto Hatch Eggs", false, function (val)
 	settings.autoHatch = val
 	if val then
 		spawn(function ()
