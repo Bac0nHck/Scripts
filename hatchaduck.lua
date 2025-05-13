@@ -20,7 +20,7 @@ getgenv().settings = {
 	autoCollect = false,
 	autoSell = false,
 	autoHatch = false,
-        noHold = false
+    noHold = false
 }
 
 w:Toggle("Auto Collect Eggs", false, function (val)
@@ -119,6 +119,7 @@ w:Button("Destroy GUI", function ()
     settings.autoCollect = false
     settings.autoSell = false
     settings.autoHatch = false
+    settings.noHold = false
 end)
 game:GetService("ProximityPromptService").PromptButtonHoldBegan:Connect(function(prompt)
     if settings.noHold then
