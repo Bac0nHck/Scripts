@@ -20,7 +20,7 @@ getgenv().settings = {
 	autoCollect = false,
 	autoSell = false,
 	autoHatch = false,
-    noHold = false
+        noHold = false
 }
 
 w:Toggle("Auto Collect Eggs", false, function (val)
