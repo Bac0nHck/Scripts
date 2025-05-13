@@ -19,7 +19,8 @@ end
 getgenv().settings = {
 	autoCollect = false,
 	autoSell = false,
-	autoHatch = false
+	autoHatch = false,
+    noHold = false
 }
 
 w:Toggle("Auto Collect Eggs", false, function (val)
@@ -100,6 +101,9 @@ w:Button("Open Eggs UI", function ()
 		duckUI.Visible = false
 	end
 end)
+w:Toggle("No Prompt Hold", false, function(value)
+    settings.noHold = value
+end)
 w:Button("Anti AFK", function()
 	local bb = game:GetService("VirtualUser")
 	plr.Idled:Connect(
@@ -115,4 +119,9 @@ w:Button("Destroy GUI", function ()
     settings.autoCollect = false
     settings.autoSell = false
     settings.autoHatch = false
+end)
+game:GetService("ProximityPromptService").PromptButtonHoldBegan:Connect(function(prompt)
+    if settings.noHold then
+        prompt.HoldDuration = 0
+    end
 end)
