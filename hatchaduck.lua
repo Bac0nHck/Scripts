@@ -93,8 +93,12 @@ w:Toggle("Auto Sell All", false, function (val)
 end)
 w:Button("Open Eggs UI", function ()
 	local duckUI = plr.PlayerGui:FindFirstChild("Vliccs_DuckUI"):FindFirstChild("Frames"):FindFirstChild("Ducks")
-	duckUI.Visible = true
-	duckUI.Size = UDim2.new(1.115, 0, 0.543, 0)
+	if not duckUI.Visible then
+		duckUI.Visible = true
+		duckUI.Size = UDim2.new(1.115, 0, 0.543, 0)
+	else
+		duckUI.Visible = false
+	end
 end)
 w:Button("Anti AFK", function()
 	local bb = game:GetService("VirtualUser")
