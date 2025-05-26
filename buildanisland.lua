@@ -20,7 +20,8 @@ getgenv().settings = {
 	sell = false,
 	gold = false,
 	collect = false,
-	harvest = false
+	harvest = false,
+    hive = false
 }
 
 local expand_delay = 0.1
@@ -137,6 +138,20 @@ m:Toggle("Auto Harvest", settings.harvest, function (b)
 		end
 	end)
 end)
+m:Toggle("Auto Collect Hive", settings.hive, function (b)
+    settings.hive = b
+    task.spawn(function ()
+        while settings.hive do
+            for _, spot in ipairs(land:GetDescendants()) do
+                if spot:IsA("Model") and spot.Name:match("Spot") then
+                    game:GetService("ReplicatedStorage"):WaitForChild("Communication"):WaitForChild("Hive"):FireServer(spot.Parent.Name, spot.Name, 2)
+                end
+            end
+            task.wait(1)
+        end
+    end)
+end)
+
 
 local items = {}
 for _, item in ipairs(plr.PlayerGui.Main.Menus.Merchant.Inner.ScrollingFrame.Hold:GetChildren()) do
@@ -184,11 +199,13 @@ for _, child in ipairs(TurtleLib:GetDescendants()) do
 		end
 	end
 end
-game:GetService("RunService").RenderStepped:Connect(function()
-	if timerUI and timer then
-		local time = timer.Text
-		timerUI:FindFirstChild("Window"):FindFirstChild("Label").Text = time
-	end
+pcall(function()
+    game:GetService("RunService").RenderStepped:Connect(function()
+        if timerUI and timer then
+            local time = timer.Text
+            timerUI:FindFirstChild("Window"):FindFirstChild("Label").Text = time
+        end
+    end)
 end)
 
 s:Button("Anti AFK", function ()
@@ -212,7 +229,8 @@ s:Button("Destroy Gui", function ()
 	settings.sell = false;
 	settings.gold = false;
 	settings.collect = false;
-	settings.harvest = false
+	settings.harvest = false;
+    settings.hive = false
 	lib:Destroy()
 end)
 s:Label("~ t.me/arceusxscripts", Color3.fromRGB(127, 143, 166))
