@@ -51,7 +51,30 @@ m:Button("Collect All Food", function ()
     task.wait(.25)
     plr.Character:FindFirstChild("HumanoidRootPart").CFrame = lastPos
 end)
--- special thx to moligrafi - https://rscripts.net/script/bring-items-and-bring-food-o7rP
+m:Button("Drop All Food", function ()
+    lastPos = plr.Character:FindFirstChild("HumanoidRootPart").CFrame
+    for _, food in pairs(plr.Backpack:GetChildren()) do
+        food.Parent = plr.Character
+    end
+    task.wait(.25)
+    plr.Character:FindFirstChildOfClass("Humanoid").Health = 0
+
+    task.spawn(function()
+        local function onCharacterAdded(char)
+            local hrp = char:WaitForChild("HumanoidRootPart", 5)
+            if hrp and lastPos then
+                task.wait(0.5)
+                hrp.CFrame = lastPos
+            end
+        end
+
+        if not plr.Character or plr.Character:FindFirstChildOfClass("Humanoid").Health == 0 then
+            plr.CharacterAdded:Wait()
+            onCharacterAdded(plr.Character)
+        end
+    end)
+end)
+-- thx to moligrafi - https://rscripts.net/script/bring-items-and-bring-food-o7rP
 local selected = nil
 local function ReturnFurniture()
   local Names = {}
@@ -108,39 +131,51 @@ end)
 local lurkerNight
 m:Toggle("Lurker ESP", false, function (b)
     getgenv().lurker_esp = b
-    lurkerNight = game:GetService("Workspace"):WaitForChild("JumperNight")
+
+    local function findNightFolder()
+        for _, obj in pairs(game:GetService("Workspace"):GetChildren()) do
+            if obj:IsA("Folder") and string.find(obj.Name, "Night") then
+                return obj
+            end
+        end
+        return nil
+    end
+
     if lurker_esp then
         task.spawn(function ()
             while lurker_esp do
-                if lurkerNight then
-                    for _, lurker in pairs(lurkerNight:GetChildren()) do
+                local nightFolder = findNightFolder()
+                if nightFolder then
+                    for _, lurker in pairs(nightFolder:GetChildren()) do
                         if lurker:IsA("Model") and lurker:FindFirstChild("HumanoidRootPart") then
-                            local hightlight = lurker:FindFirstChild("Highlight")
-                            if not hightlight then
-                                hightlight = Instance.new("Highlight")
-                                hightlight.Name = "Highlight"
-                                hightlight.Parent = lurker
+                            local highlight = lurker:FindFirstChild("Highlight")
+                            if not highlight then
+                                highlight = Instance.new("Highlight")
+                                highlight.Name = "Highlight"
+                                highlight.Parent = lurker
                             end
                         end
                     end
+                else
+                    repeat task.wait() until findNightFolder() ~= nil or not lurker_esp
                 end
                 task.wait(1)
             end
         end)
     else
-        if lurkerNight then
-            for _, lurker in pairs(lurkerNight:GetChildren()) do
+        local nightFolder = findNightFolder()
+        if nightFolder then
+            for _, lurker in pairs(nightFolder:GetChildren()) do
                 if lurker:IsA("Model") and lurker:FindFirstChild("HumanoidRootPart") then
-                    local hightlight = lurker:FindFirstChild("Highlight")
-                    if hightlight then
-                        hightlight:Destroy()
+                    local highlight = lurker:FindFirstChild("Highlight")
+                    if highlight then
+                        highlight:Destroy()
                     end
                 end
             end
         end
     end
 end)
-
 
 t:Button("to Bunker", function ()
     plr.Character:FindFirstChild("HumanoidRootPart").CFrame = game:GetService("Workspace"):FindFirstChild("Bunkers")[bunkerName]:FindFirstChild("SpawnLocation").CFrame
