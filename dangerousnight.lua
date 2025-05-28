@@ -9,8 +9,6 @@ local players = game:GetService("Players")
 local plr = players.LocalPlayer
 local bunkerName = plr:GetAttribute("AssignedBunkerName")
 
-local lurkerNight = game:GetService("Workspace"):WaitForChild("JumperNight")
-
 m:Toggle("Noclip", false, function (b)
     getgenv().noclip = b
     if noclip then
@@ -107,8 +105,10 @@ m:Toggle("Sound Spam", false, function (b)
         end
     end)
 end)
+local lurkerNight
 m:Toggle("Lurker ESP", false, function (b)
     getgenv().lurker_esp = b
+    lurkerNight = game:GetService("Workspace"):WaitForChild("JumperNight")
     if lurker_esp then
         task.spawn(function ()
             while lurker_esp do
