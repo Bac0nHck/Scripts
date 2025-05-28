@@ -129,7 +129,7 @@ m:Toggle("Sound Spam", false, function (b)
     end)
 end)
 local lurkerNight
-m:Toggle("Lurker ESP", false, function (b)
+m:Toggle("Monsters ESP", false, function (b)
     getgenv().lurker_esp = b
 
     local function findNightFolder()
