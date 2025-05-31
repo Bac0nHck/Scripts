@@ -18,25 +18,27 @@ end)
 w:Toggle("Ores ESP", false, function (bool)
     settings.ores_esp = bool
     if settings.ores_esp then
-        while settings.ores_esp do
-            for _, item in pairs(items:GetChildren()) do
-                if not item:FindFirstChild("OreESP") then
-                    for _, item in pairs(items:GetChildren()) do
-                        if not item:FindFirstChild("OreESP") then
-                            local box = Instance.new("BoxHandleAdornment", item)
-                            box.Name = "OreESP"
-                            box.Adornee = item
-                            box.AlwaysOnTop = true
-                            box.Size = item.Size
-                            box.ZIndex = 0
-                            box.Transparency = 0.5
-                            box.Color3 = item.Color
+        pcall(function ()
+            while settings.ores_esp do
+                for _, item in pairs(items:GetChildren()) do
+                    if not item:FindFirstChild("OreESP") then
+                        for _, item in pairs(items:GetChildren()) do
+                            if not item:FindFirstChild("OreESP") then
+                                local box = Instance.new("BoxHandleAdornment", item)
+                                box.Name = "OreESP"
+                                box.Adornee = item
+                                box.AlwaysOnTop = true
+                                box.Size = item.Size
+                                box.ZIndex = 0
+                                box.Transparency = 0.5
+                                box.Color3 = item.Color
+                            end
                         end
                     end
                 end
+                task.wait(.75)
             end
-            task.wait(.75)
-        end
+        end)
     else
         for _, item in pairs(items:GetDescendants()) do
             if item.Name == "OreESP" then
