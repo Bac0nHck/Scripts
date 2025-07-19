@@ -13,6 +13,7 @@ game.Workspace.DescendantAdded:Connect(function(m)
         map = m
     end
 end)
+local delay = 2.5
 getgenv().farm = false
 w:Toggle("BeachBall Farm", false, function(bool)
     getgenv().farm = bool
@@ -39,13 +40,16 @@ w:Toggle("BeachBall Farm", false, function(bool)
                             if p:IsA("BasePart") and p.CanCollide then p.CanCollide=false end
                         end
                         humPart.CFrame = coin.CFrame * CFrame.new(0,6,0)
-                        task.wait(2.5)
+                        task.wait(delay)
                     end
                 end
             end
         end
         task.wait(1)
     end
+end)
+w:Box("Farm Delay", function(num)
+    delay = tonumber(num) or 2.5
 end)
 local GC = getconnections or get_signal_cons
 w:Button("Anti AFK", function()
