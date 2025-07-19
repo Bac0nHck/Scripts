@@ -9,47 +9,84 @@ plr.CharacterAdded:Connect(function(char)
 end)
 local map
 game.Workspace.DescendantAdded:Connect(function(m)
-    if m:IsA("Model") and m.Name == "CoinContainer" then
+    if m:IsA("Model") and m:GetAttribute("MapID") then
         map = m
     end
 end)
-local delay = 2.5
+game.Workspace.DescendantRemoving:Connect(function(m)
+    if m == map then
+        map = nil
+    end
+end)
+local tweenService = game:GetService("TweenService")
+local function teleport(obj)
+    if obj and obj:IsDescendantOf(workspace) and humPart and humPart:IsDescendantOf(workspace) then
+        local distance = (humPart.Position - obj.Position).Magnitude
+        local time = math.clamp(distance / 20, 0.2, 5)
+
+        local tween = tweenService:Create(humPart, TweenInfo.new(time, Enum.EasingStyle.Linear), {CFrame = obj.CFrame * CFrame.new(0, -4, 0)})
+        tween:Play()
+        tween.Completed:Wait(.6)
+
+        local touchInterest = obj:FindFirstChild("TouchInterest")
+        if touchInterest then
+            firetouchinterest(humPart, obj, 0)
+            firetouchinterest(humPart, obj, 1)
+        end
+    end
+end
 getgenv().farm = false
 w:Toggle("BeachBall Farm", false, function(bool)
     getgenv().farm = bool
+    if not getgenv().farm then
+        if workspace.Gravity ~= 196.2 then workspace.Gravity = 196.2 end
+        return
+    end
     while getgenv().farm do
+        local container = map and map:FindFirstChild("CoinContainer")
         if (not map) or (not map.Parent) then
             for _,m in ipairs(game.Workspace:GetDescendants()) do
-                if m:IsA("Model") and m.Name == "CoinContainer" then
+                if m:IsA("Model") and m:GetAttribute("MapID") then
                     map = m
                     break
                 end
             end
         end
-        if map and map.Parent then
-            for _,coin in ipairs(map:GetChildren()) do
-                if not getgenv().farm then break end
-                if coin:IsA("Part") and coin.Name=="Coin_Server" and coin:GetAttribute("CoinID")=="BeachBall" then
-                    local cv = coin:FindFirstChild("CoinVisual")
-                    if cv and cv.Transparency~=1 then
-                        if not humPart or not humPart.Parent then
-                            humPart = character and character:FindFirstChild("HumanoidRootPart")
-                            if not humPart then break end
+        if map then
+            if container then
+                if workspace.Gravity ~= 0 then workspace.Gravity = 0 end
+
+                local anyCoin = false
+
+                for _,coin in ipairs(container:GetChildren()) do
+                    if not getgenv().farm then break end
+                    if coin:IsA("Part") and coin.Name=="Coin_Server" and coin:GetAttribute("CoinID")=="BeachBall" then
+                        local cv = coin:FindFirstChild("CoinVisual")
+                        if cv and cv.Transparency~=1 then
+                            anyCoin = true
+                            if not humPart or not humPart.Parent then
+                                humPart = character and character:FindFirstChild("HumanoidRootPart")
+                                if not humPart then break end
+                            end
+                            for _,p in pairs(character:GetChildren()) do
+                                if p:IsA("BasePart") and p.CanCollide then p.CanCollide=false end
+                            end
+                            teleport(coin)
                         end
-                        for _,p in pairs(character:GetChildren()) do
-                            if p:IsA("BasePart") and p.CanCollide then p.CanCollide=false end
-                        end
-                        humPart.CFrame = coin.CFrame * CFrame.new(0,6,0)
-                        task.wait(delay)
                     end
                 end
+
+                if not anyCoin then
+                    if workspace.Gravity ~= 196.2 then workspace.Gravity = 196.2 end
+                    humPart.CFrame = CFrame.new(93, 140, 61)
+                end
             end
+        else
+            if workspace.Gravity ~= 196.2 then workspace.Gravity = 196.2 end
+            humPart.CFrame = CFrame.new(93, 140, 61)
         end
         task.wait(1)
     end
-end)
-w:Box("Farm Delay", function(num)
-    delay = tonumber(num) or 2.5
 end)
 local GC = getconnections or get_signal_cons
 w:Button("Anti AFK", function()
