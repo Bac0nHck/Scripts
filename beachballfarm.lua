@@ -84,10 +84,6 @@ spawn(function()
                 {
                     name = "Current BeachBalls",
                     value = textLabel and textLabel.Text or "N/A"
-                },
-                {
-                    name = "Status",
-                    value = "Working"
                 }
             },
             footer = {
