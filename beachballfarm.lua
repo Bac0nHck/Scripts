@@ -135,15 +135,19 @@ while true do
         end
     end
 
-    if coinToCollect then
-        char.HumanoidRootPart.CFrame = coinToCollect.CFrame
-        task.wait(1)
-        char.HumanoidRootPart.CFrame = CFrame.new(132, 140, 60)
-        task.wait(2)
-    else
-        char.HumanoidRootPart.CFrame = CFrame.new(132, 140, 60)
-        task.wait(1)
-    end
+   if coinToCollect then
+		if char:FindFirstChild("HumanoidRootPart") then
+			char:FindFirstChild("HumanoidRootPart").CFrame = coinToCollect.CFrame
+			task.wait(1)
+			char:FindFirstChild("HumanoidRootPart").CFrame = CFrame.new(132, 140, 60)
+			task.wait(2)
+		end
+	else
+		if char:FindFirstChild("HumanoidRootPart") then
+			char:FindFirstChild("HumanoidRootPart").CFrame = CFrame.new(132, 140, 60)
+			task.wait(1)
+		end
+	end
 end
 task.spawn(function()
     loadstring(game:HttpGet('https://raw.githubusercontent.com/Linux6699/DaHubRevival/main/AntiFling.lua'))()
