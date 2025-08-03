@@ -121,14 +121,16 @@ Tabs.Main:CreateButton{
     Description = "",
     Callback = function()
         lastPos = humanoidRootPart.CFrame
-        for _, item in pairs(itemsFolder:GetChildren()) do
-            if isSackFull() then
-                break
+        pcall(function ()
+            for _, item in pairs(itemsFolder:GetChildren()) do
+                if isSackFull() then
+                    break
+                end
+                if item.Name == name then
+                    store(item)
+                end
             end
-            if item.Name == name then
-                store(item)
-            end
-        end
+        end)
         humanoidRootPart.CFrame = lastPos
     end
 }
