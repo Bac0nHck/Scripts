@@ -1,7 +1,7 @@
 local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
 
 local Window = Library:CreateWindow{
-    Title = "items Manager",
+    Title = "Items Manager",
     SubTitle = "by bac0nh1ckoff",
     TabWidth = 160,
     Size = UDim2.fromOffset(530, 325),
