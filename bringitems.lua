@@ -53,8 +53,10 @@ inventory.ChildRemoved:Connect(function(child)
 end)
 
 local itemsFolder = workspace:FindFirstChild("Items")
+local characters = workspace:FindFirstChild("Characters")
 local lastPos = nil
 local items = {}
+local kids = {}
 local name = nil
 
 local function isSackFull()
@@ -82,6 +84,16 @@ local Items = Tabs.Main:CreateDropdown("ItemsList", {
     Default = "",
 })
 Items:OnChanged(function(Value)
+    name = Value
+end)
+
+local Kids = Tabs.Main:CreateDropdown("KidsList", {
+    Title = "Kids List",
+    Values = kids,
+    Multi = false,
+    Default = "",
+})
+Kids:OnChanged(function(Value)
     name = Value
 end)
 
@@ -114,7 +126,35 @@ local function updateItemsDropdown()
     end)
 end
 
+local debounce2 = false
+local function updateKidsDropdown()
+    if debounce2 then return end
+    debounce2 = true
+
+    task.delay(0.1, function ()
+        if not Kids then return end
+
+        local uniqueKids = {}
+
+        for _, kid in pairs(characters:GetChildren()) do
+            if string.find(kid.Name, "Child") then
+                table.insert(uniqueKids, kid.Name)
+            end
+        end
+
+        kids = uniqueKids
+        if typeof(Kids.SetValue) == "function" then
+            pcall(function ()
+                Kids:SetValues(kids)
+            end)
+        end
+
+        debounce2 = false
+    end)
+end
+
 updateItemsDropdown()
+updateKidsDropdown()
 
 Tabs.Main:CreateButton{
     Title = "Bring Item",
@@ -122,10 +162,12 @@ Tabs.Main:CreateButton{
     Callback = function()
         lastPos = humanoidRootPart.CFrame
         pcall(function ()
-            for _, item in pairs(itemsFolder:GetChildren()) do
-                if isSackFull() then
-                    break
-                end
+            local all = {}
+            for _, obj in pairs(itemsFolder:GetChildren()) do table.insert(all, obj) end
+            for _, obj in pairs(characters:GetChildren()) do table.insert(all, obj) end
+
+            for _, item in pairs(all) do
+                if isSackFull() then break end
                 if item.Name == name then
                     store(item)
                 end
@@ -139,7 +181,7 @@ Tabs.Main:CreateButton{
     Title = "Teleport to Item",
     Description = "",
     Callback = function()
-        local item = itemsFolder:FindFirstChild(name)
+        local item = itemsFolder:FindFirstChild(name) or characters:FindFirstChild(name)
         if item then
             local part = item:FindFirstChildWhichIsA("BasePart")
             if part then
@@ -165,5 +207,7 @@ Tabs.Main:CreateButton{
 
 itemsFolder.ChildAdded:Connect(updateItemsDropdown)
 itemsFolder.ChildRemoved:Connect(updateItemsDropdown)
+characters.ChildAdded:Connect(updateKidsDropdown)
+characters.ChildRemoved:Connect(updateKidsDropdown)
 
 Window:SelectTab(1)
