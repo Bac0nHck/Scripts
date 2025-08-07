@@ -1,7 +1,7 @@
 -- https://scriptblox.com/script/RetroStudio-retrostudio-model-copier-47793
 -- https://www.roblox.com/games/5846386835/RetroStudio
 
--- local model_id = ""
+-- getgenv().model_id = ""
 local Settings = {};
 Settings.ModelId = "rbxassetid://" .. model_id
 Settings.BlacklistedProperties = { "PartPack", "Parent", "Shape" }
