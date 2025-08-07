@@ -3,7 +3,7 @@
 
 -- local model_id = ""
 local Settings = {};
-Settings.ModelId = "rbxassetid://", model_id
+Settings.ModelId = "rbxassetid://" .. model_id
 Settings.BlacklistedProperties = { "PartPack", "Parent", "Shape" }
 Settings.BlacklistedClasses = { "Script", "LocalScript", "ModuleScript" }
 
