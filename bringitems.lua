@@ -24,9 +24,19 @@ local Options = Library.Options
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local character
+local humanoidRootPart
 local inventory = player:WaitForChild("Inventory")
+
+local function onCharacterAdded(char)
+    character = char
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
 
 local sack = nil
 local function findSack()
