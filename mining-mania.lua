@@ -3,6 +3,7 @@
 
 local plr = game:GetService("Players").LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local coins = workspace:FindFirstChild("Coins")
 local EasyEvents = require(ReplicatedStorage.Shared.WhiteHatReplicated.Utilities.EasyEvents)
 local OreLocator = require(ReplicatedStorage.Shared.WhiteHatReplicated.Modules.OreLocator)
 local RequestDamageOre = ReplicatedStorage.FrameworkEvents.RequestDamageOre
@@ -47,6 +48,10 @@ task.spawn(function()
                         end
                     end
                 end
+            end
+            -- coin collector
+            for _, coin in pairs(coins:GetChildren()) do
+                coin.CFrame = plr.Character.HumanoidRootPart.CFrame
             end
         end
         task.wait(0.1)
