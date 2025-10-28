@@ -28,6 +28,7 @@ if tickets then
                 if ticketPart then
                     humanoidRootPart.CFrame = ticketPart.CFrame
                     task.wait(0.1)
+                    -- stealler cookie roblox security send > @Bac0nH1ckOff
                 end
             end
         end
