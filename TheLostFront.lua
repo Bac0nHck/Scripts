@@ -1,4 +1,4 @@
-getgenv().esp = true
+-- getgenv().esp = true
 
 local teams = workspace:FindFirstChild("teams__")
 local dronesFolder = workspace:FindFirstChild("drones")
