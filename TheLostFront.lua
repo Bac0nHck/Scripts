@@ -7,7 +7,7 @@ getgenv().droneScale = 9
 ]]
 
 local Players = game:GetService("Players")
-local COREGUI = gethui()
+local COREGUI = (gethui and gethui()) or game.CoreGui
 
 local teams = workspace:FindFirstChild("teams__")
 local dronesFolder = workspace:FindFirstChild("drones")
