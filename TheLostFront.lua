@@ -1,9 +1,9 @@
 --[[
 getgenv().esp = true
 
-local playerTransparency = 0.5
-local droneTransparency = 0.3
-local droneScale = 9
+getgenv().playerTransparency = 0.5
+getgenv().droneTransparency = 0.3
+getgenv().droneScale = 9
 ]]
 
 local Players = game:GetService("Players")
