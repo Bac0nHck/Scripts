@@ -51,15 +51,6 @@ local function createESP(target, teamName)
             box.Parent = ESPholder
         end
     end
-
-    if target:FindFirstChild("Head") then
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = target.Name.."_Billboard"
-        billboard.Adornee = target.Head
-        billboard.Size = UDim2.new(0, 0, 0, 0)
-        billboard.AlwaysOnTop = true
-        billboard.Parent = ESPholder
-    end
 end
 
 local function removeESP(target)
