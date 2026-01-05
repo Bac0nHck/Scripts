@@ -1,0 +1,64 @@
+-- Рофло-скрипт, на который ты зачем-то зашёл? Ладно
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local squares = {}
+
+local function createSquare()
+    local square = Drawing.new("Square")
+    square.Visible = false
+    square.Color = Color3.new(0, 0, 0)
+    square.Thickness = 1
+    square.Transparency = 1
+    square.Filled = true
+    return square
+end
+
+RunService.RenderStepped:Connect(function()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            if player.Character and player.Character:FindFirstChild("Head") then
+                local head = player.Character.Head
+                local vector, onScreen = Camera:WorldToViewportPoint(head.Position)
+
+                if onScreen then
+                    local isObscured = #Camera:GetPartsObscuringTarget({head.Position}, {player.Character, LocalPlayer.Character}) > 0
+                    
+                    if not isObscured then
+                        if not squares[player] then
+                            squares[player] = createSquare()
+                        end
+
+                        local square = squares[player]
+                        local headTopPos = head.Position + Vector3.new(0, 0.6, 0)
+                        local headBottomPos = head.Position - Vector3.new(0, 0.6, 0)
+                        
+                        local topVec = Camera:WorldToViewportPoint(headTopPos)
+                        local bottomVec = Camera:WorldToViewportPoint(headBottomPos)
+                        
+                        local sizeY = math.abs(topVec.Y - bottomVec.Y)
+                        
+                        square.Size = Vector2.new(sizeY, sizeY)
+                        square.Position = Vector2.new(vector.X - (sizeY / 2), vector.Y - (sizeY / 2))
+                        square.Visible = true
+                    else
+                        if squares[player] then squares[player].Visible = false end
+                    end
+                else
+                    if squares[player] then squares[player].Visible = false end
+                end
+            else
+                if squares[player] then squares[player].Visible = false end
+            end
+        end
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if squares[player] then
+        squares[player]:Remove()
+        squares[player] = nil
+    end
+end)
