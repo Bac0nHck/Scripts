@@ -1,0 +1,105 @@
+-- getgenv().esp = true
+-- https://www.roblox.com/games/113217312262185/SCPretroBreach
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = gethui() or game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+
+local espCache = {}
+
+local function removeESP(player)
+    if espCache[player] then
+        if espCache[player].Highlight then espCache[player].Highlight:Destroy() end
+        if espCache[player].Billboard then espCache[player].Billboard:Destroy() end
+        espCache[player] = nil
+    end
+end
+
+local function updateESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+            local head = char and char:FindFirstChild("Head")
+            local humanoid = char and char:FindFirstChild("Humanoid")
+
+            if getgenv().esp and char and rootPart and head and humanoid and humanoid.Health > 0 then
+                
+                if not espCache[player] then
+                    espCache[player] = {}
+                end
+
+                if not espCache[player].Highlight then
+                    local hl = Instance.new("Highlight")
+                    hl.Name = player.Name .. "_Highlight"
+                    hl.FillTransparency = 0.5
+                    hl.OutlineTransparency = 0
+                    hl.OutlineColor = Color3.new(1, 1, 1)
+                    hl.Parent = CoreGui
+                    espCache[player].Highlight = hl
+                end
+
+                local hl = espCache[player].Highlight
+                hl.Adornee = char
+                hl.FillColor = player.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+
+                if not espCache[player].Billboard then
+                    local bg = Instance.new("BillboardGui")
+                    bg.Name = player.Name .. "_Info"
+                    bg.Size = UDim2.new(0, 200, 0, 50)
+                    bg.StudsOffset = Vector3.new(0, 2, 0)
+                    bg.AlwaysOnTop = true
+                    bg.Parent = CoreGui
+                    
+                    local nameLab = Instance.new("TextLabel", bg)
+                    nameLab.Name = "NameLabel"
+                    nameLab.BackgroundTransparency = 1
+                    nameLab.Size = UDim2.new(1, 0, 0.5, 0)
+                    nameLab.Font = Enum.Font.GothamBold
+                    nameLab.TextStrokeTransparency = 0
+                    nameLab.TextColor3 = Color3.new(1, 1, 1)
+                    nameLab.TextSize = 12
+                    
+                    local infoLab = Instance.new("TextLabel", bg)
+                    infoLab.Name = "InfoLabel"
+                    infoLab.BackgroundTransparency = 1
+                    infoLab.Position = UDim2.new(0, 0, 0.4, 0)
+                    infoLab.Size = UDim2.new(1, 0, 0.5, 0)
+                    infoLab.Font = Enum.Font.GothamBold
+                    infoLab.TextStrokeTransparency = 0
+                    infoLab.TextSize = 11
+                    
+                    espCache[player].Billboard = bg
+                end
+
+                local bg = espCache[player].Billboard
+                bg.Adornee = head
+                
+                local nameLabel = bg:FindFirstChild("NameLabel")
+                local infoLabel = bg:FindFirstChild("InfoLabel")
+
+                nameLabel.Text = player.DisplayName
+                
+                local distance = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude)
+                local health = math.floor(humanoid.Health)
+                local maxHealth = humanoid.MaxHealth
+
+                infoLabel.Text = string.format("HP: %d | Dist: %d", health, distance)
+
+                infoLabel.TextColor3 = Color3.fromHSV(math.clamp(health / maxHealth, 0, 1) * 0.3, 1, 1)
+
+            else
+                removeESP(player)
+            end
+        else
+            removeESP(player)
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(updateESP)
+
+Players.PlayerRemoving:Connect(function(player)
+    removeESP(player)
+end)
