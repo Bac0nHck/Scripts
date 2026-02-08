@@ -1,6 +1,7 @@
 -- getgenv().toggleChests = false
 -- getgenv().toggleFish = false
 -- https://www.roblox.com/games/127794225497302/Abyss
+-- t.me/arceusxcommunity
 
 local gameWork = game:GetService("Workspace"):FindFirstChild("Game")
 local chests = gameWork and gameWork:FindFirstChild("Chests")
