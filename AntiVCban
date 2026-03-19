@@ -1,0 +1,18 @@
+-- // Mobile button
+local UserInputService = game:GetService("UserInputService")
+local s, b, UICorner = Instance.new("ScreenGui"), Instance.new("TextButton"), Instance.new("UICorner")
+s.Name, s.Parent, s.ZIndexBehavior = "s", game.CoreGui, Enum.ZIndexBehavior.Sibling
+b.Name, b.Parent, b.Text, b.Font = "b", s, "+", Enum.Font.SourceSans
+b.Size, b.Position = UDim2.new(0, 50, 0, 50), UDim2.new(0.1959, 0, 0.3771, 0)
+b.BackgroundColor3, b.BackgroundTransparency = Color3.fromRGB(109, 109, 109), 0.4
+b.TextColor3, b.TextSize, b.TextWrapped = Color3.fromRGB(255, 255, 255), 34, true
+b.BorderSizePixel, b.Active, b.Draggable = 0, true, true
+UICorner.CornerRadius, UICorner.Parent = UDim.new(0, 5), b
+b.MouseButton1Click:Connect(function()
+    pcall(function()
+        game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("MoistUI").Enabled = not game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("MoistUI").Enabled
+    end
+end)
+-- // Main script
+-- JOIN DISCORD.GG/MOIS7 FOR POTASSIUM GIVEAWAYS!
+loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/c146e7169df99db2afa5052b177dd747.lua"))()
