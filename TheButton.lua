@@ -253,9 +253,9 @@ do
         Callback = function()
             local mineField = game:GetService("Workspace"):FindFirstChild("Minefield")
             if mineField then
-                for _, part in ipairs(mineField) do
-                    if part.Name == "landmine" then
-                        landmine.Transparency = 0
+                for _, part in pairs(mineField:GetChildren()) do
+                    if part.Name == "Landmine" then
+                        part.Transparency = 0
                     end
                 end
             end
