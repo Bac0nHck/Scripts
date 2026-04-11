@@ -21,6 +21,7 @@ local superpunchAnim = nil
 local uppercutAnim   = nil
 
 local lib    = loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/akadmin-lib.lua"))()
+if warn then warn("More scripts: " .. game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Something/refs/heads/main/telegram")) end
 local window = lib.new("Dropkick")
 local mainTab = window:addTab("Main")
 window:switchTab(mainTab)
