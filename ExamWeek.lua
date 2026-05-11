@@ -148,6 +148,7 @@ if playersCount > 1 then
     w:Toggle("Players ESP", false, function(bool)
         if bool then
             for _, player in pairs(players:GetChildren()) do
+                if player == plr then continue end
                 local highlight = player.Character:FindFirstChild("Player_ESP") 
                 if not highlight then
                     local highlight = Instance.new("Highlight")
