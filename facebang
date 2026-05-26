@@ -6,6 +6,6 @@ game:GetService("StarterGui"):SetCore("SendNotification", {
     Text = "Sent you a friend request!",
     Icon = "https://www.roblox.com/headshot-thumbnail/image?userId=2903833353&width=420&height=420&format=png",
     Duration = 5,
-    Button1 = "Accept",
-    Button2 = "Decline"
+    Button1 = "E",
+    Button2 = "e"
 })
