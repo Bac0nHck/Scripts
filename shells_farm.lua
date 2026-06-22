@@ -1,3 +1,4 @@
+-- // t.me/arceusxcommunity <3
 local Players = game:GetService("Players")
 local RS      = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("CoreGui") and game:GetService("StarterGui")
@@ -22,6 +23,14 @@ local function notify(msg, dur)
     end)
     print("[Shells Auto] " .. msg)
 end
+
+local VirtualUser = game:GetService("VirtualUser")
+LP.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end)
 
 local function nrm(a) return (a % 360 + 360) % 360 end
 local function adiff(a, b) return math.abs(((a - b + 180) % 360) - 180) end
@@ -208,6 +217,7 @@ w:Toggle("Auto Dig", false, function(state)
     autoDig = state
     if state then
         task.spawn(digLoop)
+        notify("Auto Dig enabled", 2)
     end
 end)
 
