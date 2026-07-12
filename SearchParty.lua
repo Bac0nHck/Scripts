@@ -46,6 +46,8 @@ local Flags = {
 
 	FullBright = false,
 	NoFog = false,
+
+	InfiniteStamina = false,
 }
 
 local Running = true
@@ -493,7 +495,51 @@ local function ensureLightingBackup()
 	end
 end
 
+-- Infinite Stamina -----------------------------------------------------------
+-- Stamina/sprint is fully client-side: stored as attribute "LocalStateStaminaTag"
+-- on Character.StateMachine in the form "Stat, cur, min, max, flag, persist".
+-- Keeping cur == max means it never depletes. Works for survivor AND killer
+-- (same system for both roles), so we key off the attribute, not the team.
+local STAM_ATTR = "LocalStateStaminaTag"
+
+local function topUpStamina()
+	if not Flags.InfiniteStamina then return end
+	local char = getChar()
+	local folder = char and char:FindFirstChild("StateMachine")
+	if not folder then return end
+	local raw = folder:GetAttribute(STAM_ATTR)
+	if type(raw) ~= "string" then return end
+	local p = string.split(raw, ", ")
+	if p[1] ~= "Stat" or not p[4] then return end
+	local cur, max = tonumber(p[2]), tonumber(p[4])
+	if cur and max and cur < max then
+		p[2] = p[4] -- current := max, keep every other field untouched
+		folder:SetAttribute(STAM_ATTR, table.concat(p, ", "))
+	end
+end
+
+local function hookStaminaChar(char)
+	if not char then return end
+	local folder = char:WaitForChild("StateMachine", 10)
+	if not folder then return end
+	if Connections.StaminaAttr then
+		pcall(function() Connections.StaminaAttr:Disconnect() end)
+	end
+	-- instant revert the moment the game spends stamina
+	-- (no recursion: once cur == max, topUpStamina is a no-op)
+	Connections.StaminaAttr = folder:GetAttributeChangedSignal(STAM_ATTR):Connect(topUpStamina)
+	topUpStamina()
+end
+
+Connections.StaminaChar = LocalPlayer.CharacterAdded:Connect(function(char)
+	task.spawn(hookStaminaChar, char)
+end)
+if LocalPlayer.Character then
+	task.spawn(hookStaminaChar, LocalPlayer.Character)
+end
+
 Connections.Heartbeat = RunService.Heartbeat:Connect(function()
+	topUpStamina() -- per-frame safety net (event revert is primary)
 	if Flags.FullBright then
 		ensureLightingBackup()
 		Lighting.Brightness = 2.5
@@ -532,10 +578,10 @@ local function restoreLighting()
 end
 
 local Window = Fluent:CreateWindow({
-	Title = "Search Party Hub",
+	Title = "Search Party",
 	SubTitle = "by bac0nh1ckoff",
 	Search = true,
-	Icon = "radar",
+	Icon = "tv",
 	TabWidth = 150,
 	Size = UDim2.fromOffset(500, 400),
 	Acrylic = false,
@@ -544,7 +590,7 @@ local Window = Fluent:CreateWindow({
 })
 
 local Minimizer = Fluent:CreateMinimizer({
-	Icon = "radar",
+	Icon = "tv",
 	Size = UDim2.fromOffset(46, 46),
 	Position = UDim2.new(0, 20, 0, 120),
 	Acrylic = false,
@@ -558,6 +604,7 @@ local Tabs = {
 	Farm = Window:AddTab({ Title = "Farm", Icon = "target" }),
 	Esp = Window:AddTab({ Title = "ESP", Icon = "eye" }),
 	Killer = Window:AddTab({ Title = "Killer", Icon = "skull" }),
+	Player = Window:AddTab({ Title = "Player", Icon = "cat" }),
 	Visual = Window:AddTab({ Title = "Visuals", Icon = "sun" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
 }
@@ -687,6 +734,12 @@ Tabs.Killer:AddToggle("AimSurvivor", { Title = "Aim At Nearest Survivor", Descri
 	Flags.AimSurvivor = v
 end)
 
+Tabs.Player:AddSection("Stamina")
+
+Tabs.Player:AddToggle("InfiniteStamina", { Title = "Infinite Stamina", Description = "", Default = false }):OnChanged(function(v)
+	Flags.InfiniteStamina = v
+end)
+
 Tabs.Visual:AddSection("Anti Darkness")
 
 Tabs.Visual:AddToggle("FullBright", { Title = "Full Bright", Description = "See through lights out", Default = false }):OnChanged(function(v)
@@ -740,6 +793,7 @@ local PERSIST_KEYS = {
 	"KillerESP", "SurvivorESP", "CrewmateESP", "MoneyESP", "ShowDistance", "KillerAlert", "AlertDistance",
 	"KillAura", "KillAuraRange", "AimSurvivor",
 	"FullBright", "NoFog",
+	"InfiniteStamina",
 }
 
 local function collectConfig()
