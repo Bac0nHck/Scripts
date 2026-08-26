@@ -5871,6 +5871,10 @@ end
 function library.AutoFarm:GetGatePassage(prompt, direction, endZ)
     local finalDoor = self:GetFinalDoor(prompt)
     local command = finalDoor and finalDoor:FindFirstChild("Command", true)
+    local leftHolder = finalDoor and finalDoor:FindFirstChild("DoorL")
+    local rightHolder = finalDoor and finalDoor:FindFirstChild("DoorR")
+    local leftDoor = leftHolder and leftHolder:FindFirstChild("Door", true)
+    local rightDoor = rightHolder and rightHolder:FindFirstChild("Door", true)
     local best
     local bestScore = -math.huge
 
@@ -5911,7 +5915,12 @@ function library.AutoFarm:GetGatePassage(prompt, direction, endZ)
     end
 
     local road = teleports:GetRoadNear(endZ)
-    local position = best and best.Position
+    local position = leftDoor
+        and leftDoor:IsA("BasePart")
+        and rightDoor
+        and rightDoor:IsA("BasePart")
+        and (leftDoor.Position + rightDoor.Position) * 0.5
+        or best and best.Position
         or road and Vector3.new(road.Position.X, road.Position.Y + road.Size.Y * 0.5 + 3.5, endZ)
 
     if not position then
@@ -5956,12 +5965,66 @@ function library.AutoFarm:GetGatePassage(prompt, direction, endZ)
         Position = position,
         Direction = direction,
         FinalDoor = finalDoor,
+        DoorL = leftDoor,
+        DoorR = rightDoor,
     }
 end
 
 function library.AutoFarm:IsGatePassageOpen(passage)
     if not passage or typeof(passage.Position) ~= "Vector3" then
         return false
+    end
+
+    local finalDoor = passage.FinalDoor
+
+    if not finalDoor or not finalDoor.Parent then
+        finalDoor = self:GetFinalDoor()
+        passage.FinalDoor = finalDoor
+    end
+
+    if finalDoor then
+        local leftHolder = finalDoor:FindFirstChild("DoorL")
+        local rightHolder = finalDoor:FindFirstChild("DoorR")
+        local currentLeft = leftHolder and leftHolder:FindFirstChild("Door", true)
+        local currentRight = rightHolder and rightHolder:FindFirstChild("Door", true)
+
+        if currentLeft and currentLeft:IsA("BasePart") then
+            passage.DoorL = currentLeft
+        end
+
+        if currentRight and currentRight:IsA("BasePart") then
+            passage.DoorR = currentRight
+        end
+    end
+
+    local leftDoor = passage.DoorL
+    local rightDoor = passage.DoorR
+
+    if leftDoor
+        and leftDoor.Parent
+        and leftDoor:IsA("BasePart")
+        and rightDoor
+        and rightDoor.Parent
+        and rightDoor:IsA("BasePart")
+    then
+        local difference = leftDoor.Position - rightDoor.Position
+
+        if difference.Magnitude > 0.1 then
+            local axis = difference.Unit
+            local leftHalf = math.abs(leftDoor.CFrame.RightVector:Dot(axis)) * leftDoor.Size.X * 0.5
+                + math.abs(leftDoor.CFrame.UpVector:Dot(axis)) * leftDoor.Size.Y * 0.5
+                + math.abs(leftDoor.CFrame.LookVector:Dot(axis)) * leftDoor.Size.Z * 0.5
+            local rightHalf = math.abs(rightDoor.CFrame.RightVector:Dot(axis)) * rightDoor.Size.X * 0.5
+                + math.abs(rightDoor.CFrame.UpVector:Dot(axis)) * rightDoor.Size.Y * 0.5
+                + math.abs(rightDoor.CFrame.LookVector:Dot(axis)) * rightDoor.Size.Z * 0.5
+            local midpoint = (leftDoor.Position + rightDoor.Position) * 0.5
+
+            passage.Position = Vector3.new(midpoint.X, passage.Position.Y, midpoint.Z)
+
+            if difference.Magnitude - leftHalf - rightHalf < 12 then
+                return false
+            end
+        end
     end
 
     local parameters = RaycastParams.new()
@@ -5974,6 +6037,41 @@ function library.AutoFarm:IsGatePassageOpen(passage)
     local result = workspace:Raycast(passage.Position - direction * 10, direction * 20, parameters)
 
     return result == nil
+end
+
+function library.AutoFarm:IsGateWindowOpen()
+    if flow.CrimesGui
+        and type(flow.CrimesGui.StartEndTimer_event) == "function"
+        and debug
+        and type(debug.getupvalues) == "function"
+    then
+        local ok, values = pcall(debug.getupvalues, flow.CrimesGui.StartEndTimer_event)
+
+        if ok and type(values) == "table" then
+            local opensAt = tonumber(values[2])
+            local closesAt = tonumber(values[3])
+            local now = workspace:GetServerTimeNow()
+
+            if opensAt and closesAt and now >= opensAt and now < closesAt then
+                return true
+            end
+        end
+    end
+
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local hud = playerGui and playerGui:FindFirstChild("HudGui")
+    local events = hud and hud:FindFirstChild("Events")
+    local closing = events and events:FindFirstChild("Closing")
+
+    if not closing or not closing.Visible then
+        return false
+    end
+
+    local timer = closing:FindFirstChild("Timer")
+    local text = timer and timer.Text or ""
+    local minutes, seconds = text:match("(%d+)%s*:%s*(%d+)")
+
+    return not minutes or tonumber(minutes) * 60 + tonumber(seconds) > 0
 end
 
 function library.AutoFarm:IsGateMoving(records)
@@ -6312,20 +6410,10 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
 
         self:UpdateUI()
 
-        local moving = self:IsGateMoving(records)
         local passageOpen = self:IsGatePassageOpen(self.GatePassage)
+        local gateWindowOpen = self:IsGateWindowOpen()
 
-        if elapsed >= 105 and moving then
-            self:ReleaseSafeZone()
-            return true
-        end
-
-        if elapsed >= 110 and passageOpen then
-            self:ReleaseSafeZone()
-            return true
-        end
-
-        if seconds and seconds <= 0 and (moving or passageOpen) then
+        if passageOpen or gateWindowOpen then
             self:ReleaseSafeZone()
             return true
         end
@@ -6427,10 +6515,16 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
         return false, "Gate passage is unavailable"
     end
 
+    self:IsGatePassageOpen(passage)
     teleports:Stream(passage.Position)
     task.wait(0.4)
 
-    for _, offset in { -10, -3, 6, 16, 32, 55, 85 } do
+    local finishOffset = math.max(
+        12,
+        (tonumber(endZ) and (endZ - passage.Position.Z) * direction or 0) + 12
+    )
+
+    for _, offset in { -10, -3, 6, finishOffset, finishOffset + 24, finishOffset + 50, finishOffset + 85 } do
         if not self.Running or self.Token ~= token or library.Unloaded then
             self:SetCrossNoclip(false)
             return false, "Auto Farm stopped"
@@ -6443,7 +6537,9 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
             false
         )
 
-        if moved and offset >= 6 and not self.FinishCrossed then
+        local crossedEnd = tonumber(endZ) and (position.Z - endZ) * direction >= 0 or offset >= 6
+
+        if moved and crossedEnd and not self.FinishCrossed then
             self.FinishCrossed = true
             self:Persist()
         end
