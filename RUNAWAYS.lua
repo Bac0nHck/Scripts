@@ -4461,7 +4461,7 @@ library.AutoFarm = {
     SessionKey = "RUNAWAYS_AUTO_FARM_SESSION",
     TransitionKey = "RUNAWAYS_AUTO_FARM_TRANSITION",
     TeleportLoader = [[
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/RUNAWAYS.lua"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/RUNAWAYS.lua?cb=" .. tostring(os.time())))()
 ]],
     Running = false,
     ResumeRequested = false,
@@ -4471,6 +4471,7 @@ library.AutoFarm = {
     Teleporting = false,
     RunActive = false,
     ActiveRunToken = nil,
+    RunHeartbeat = 0,
     Phase = "Idle",
     Detail = "Ready",
     GateText = "--",
@@ -4656,7 +4657,7 @@ function library.AutoFarm:SetLabel(name, text)
     local label = self.Labels[name]
 
     if label and type(label.SetText) == "function" then
-        label:SetText(text)
+        pcall(label.SetText, label, text)
     end
 end
 
@@ -5290,21 +5291,78 @@ end
 
 function library.AutoFarm:GetEndScreen()
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
-    local endFrame = playerGui and playerGui:FindFirstChild("EndFrame")
+    local endFrame = playerGui and playerGui:FindFirstChild("EndFrame", true)
 
-    if not endFrame or not endFrame.Enabled then
+    if not playerGui then
         return
     end
 
-    local frame = endFrame:FindFirstChild("Frame")
-    local outcomeFrame = frame and frame:FindFirstChild("Outcome")
-    local escaped = outcomeFrame and outcomeFrame:FindFirstChild("Escaped")
-    local captured = outcomeFrame and outcomeFrame:FindFirstChild("Captured")
-    local outcome = escaped and escaped.Visible and "Escaped"
-        or captured and captured.Visible and "Captured"
-        or "Ended"
+    local function visible(instance)
+        local current = instance
 
-    return endFrame, outcome
+        while current and current ~= playerGui do
+            if current:IsA("GuiObject") and not current.Visible then
+                return false
+            end
+
+            if current:IsA("LayerCollector") and not current.Enabled then
+                return false
+            end
+
+            current = current.Parent
+        end
+
+        return current == playerGui
+    end
+
+    local function layer(instance)
+        local current = instance
+
+        while current and current ~= playerGui do
+            if current:IsA("LayerCollector") then
+                return current
+            end
+
+            current = current.Parent
+        end
+    end
+
+    local escaped
+    local captured
+    local option
+
+    if endFrame and visible(endFrame) then
+        escaped = endFrame:FindFirstChild("Escaped", true)
+        captured = endFrame:FindFirstChild("Captured", true)
+        option = endFrame:FindFirstChild("Replay", true) or endFrame:FindFirstChild("Lobby", true)
+    end
+
+    if escaped and visible(escaped) then
+        return endFrame, "Escaped"
+    end
+
+    if captured and visible(captured) then
+        return endFrame, "Captured"
+    end
+
+    if option and visible(option) then
+        return endFrame, "Ended"
+    end
+
+    for _, instance in playerGui:GetDescendants() do
+        if instance:IsA("GuiObject") and visible(instance) then
+            local name = instance.Name:lower()
+            local text = (instance:IsA("TextLabel") or instance:IsA("TextButton")) and instance.Text:lower() or ""
+            local isCaptured = name:find("captured", 1, true) ~= nil or text:find("captured", 1, true) ~= nil
+            local isEscaped = name:find("escaped", 1, true) ~= nil or text:find("escaped", 1, true) ~= nil
+
+            if isCaptured or isEscaped then
+                return layer(instance) or endFrame, isCaptured and "Captured" or "Escaped"
+            end
+        end
+    end
+
+    return
 end
 
 function library.AutoFarm:FinalizeRun(outcome, detail)
@@ -5432,9 +5490,7 @@ function library.AutoFarm:HandleEndScreen(token)
         return true, "Stopped"
     end
 
-    local frame = endFrame and endFrame:FindFirstChild("Frame")
-    local buttons = frame and frame:FindFirstChild("Options")
-    local replayButton = buttons and buttons:FindFirstChild("Replay")
+    local replayButton = endFrame and endFrame:FindFirstChild("Replay", true)
     local autoReplay = self.Config.AutoReplay
 
     if toggles.RunawaysAutoFarmAutoReplay then
@@ -5449,64 +5505,67 @@ function library.AutoFarm:HandleEndScreen(token)
     then
         local queued, queueError = self:QueueTeleport("replay", self.GamePlaceId)
 
-        if queued then
-            self.ReplayRequested = true
-            local called, replayError = pcall(flow.GameManager.Replay)
-
-            if called then
-                self.Stats.Replays += 1
-                self:SetPhase("Auto Replay", "Replay vote submitted")
-                self:Persist()
-
-                local expires = os.clock() + 45
-                local hiddenAt
-
-                repeat
-                    if self.Teleporting then
-                        return true, "Teleporting"
-                    end
-
-                    if not endFrame.Parent or not endFrame.Enabled then
-                        hiddenAt = hiddenAt or os.clock()
-                        local currentMap = workspace:FindFirstChild("Map")
-                        local currentCharacter = player.Character
-                        local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
-                        local currentPrompt = teleports:GetEndPrompt()
-                        local reset = currentMap and currentMap ~= resultMap
-                            or currentCharacter and currentCharacter ~= resultCharacter
-                            or currentPrompt and currentPrompt ~= resultPrompt
-                            or resultPrompt
-                                and not resultPromptEnabled
-                                and currentPrompt
-                                and currentPrompt.Enabled
-                            or resultPosition
-                                and currentRoot
-                                and (currentRoot.Position - resultPosition).Magnitude >= 500
-
-                        if reset and os.clock() - hiddenAt >= 0.5 then
-                            self.LastGameJob = ""
-                            self.ReplayRequested = false
-                            self.ResultBusy = false
-                            self.QueueJob = nil
-                            self.QueueStatus = "Replay started"
-                            self:Persist()
-                            task.wait(1)
-                            return true, "Replay"
-                        end
-                    else
-                        hiddenAt = nil
-                    end
-
-                    task.wait(0.2)
-                until not self.Running
-                    or self.Token ~= token
-                    or library.Unloaded
-                    or os.clock() >= expires
-            else
-                self.LastError = tostring(replayError)
-            end
-        else
+        if not queued then
             self.LastError = tostring(queueError)
+        end
+
+        self.ReplayRequested = true
+        local called, replayError = pcall(flow.GameManager.Replay)
+
+        if called and replayError ~= false then
+            self.Stats.Replays += 1
+            self:SetPhase("Auto Replay", "Replay vote submitted")
+            self:Persist()
+
+            local expires = os.clock() + 45
+            local hiddenAt
+
+            repeat
+                self.RunHeartbeat = os.clock()
+
+                if self.Teleporting then
+                    return true, "Teleporting"
+                end
+
+                if not self:GetEndScreen() then
+                    hiddenAt = hiddenAt or os.clock()
+                    local currentMap = workspace:FindFirstChild("Map")
+                    local currentCharacter = player.Character
+                    local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+                    local currentPrompt = teleports:GetEndPrompt()
+                    local reset = currentMap and currentMap ~= resultMap
+                        or currentCharacter and currentCharacter ~= resultCharacter
+                        or currentPrompt and currentPrompt ~= resultPrompt
+                        or resultPrompt
+                            and not resultPromptEnabled
+                            and currentPrompt
+                            and currentPrompt.Enabled
+                        or resultPosition
+                            and currentRoot
+                            and (currentRoot.Position - resultPosition).Magnitude >= 500
+                        or os.clock() - hiddenAt >= 1.25
+
+                    if reset and os.clock() - hiddenAt >= 0.5 then
+                        self.LastGameJob = ""
+                        self.ReplayRequested = false
+                        self.ResultBusy = false
+                        self.QueueJob = nil
+                        self.QueueStatus = "Replay started"
+                        self:Persist()
+                        task.wait(1)
+                        return true, "Replay"
+                    end
+                else
+                    hiddenAt = nil
+                end
+
+                task.wait(0.2)
+            until not self.Running
+                or self.Token ~= token
+                or library.Unloaded
+                or os.clock() >= expires
+        else
+            self.LastError = tostring(replayError or "Replay was rejected")
         end
     end
 
@@ -5525,8 +5584,7 @@ function library.AutoFarm:HandleEndScreen(token)
     local queued, queueError = self:QueueTeleport("lobby", self.LobbyPlaceId)
 
     if not queued then
-        self.ResultBusy = false
-        return false, queueError
+        self.LastError = tostring(queueError)
     end
 
     local called, lobbyError = pcall(flow.GameManager.BackToLobby)
@@ -5607,7 +5665,7 @@ function library.AutoFarm:RunLobby(token)
     local createFrame = createGui and createGui:FindFirstChild("Frame")
     local exitFrame = createGui and createGui:FindFirstChild("Exit")
 
-    for attempt = 1, 5 do
+    for attempt = 1, 2 do
         if not self.Running or self.Token ~= token then
             return true
         end
@@ -5672,6 +5730,8 @@ function library.AutoFarm:RunLobby(token)
 
         self:SetPhase("Creating Game", "Vehicle: " .. car .. " | Solo | Friends")
 
+        createFrame.Visible = false
+
         local created, createError = pcall(flow.LobbyServer.create, {
             maxPlayers = 1,
             permissions = "Friends",
@@ -5682,16 +5742,54 @@ function library.AutoFarm:RunLobby(token)
             return false, tostring(createError)
         end
 
-        if self:WaitForTeleport(token, 45) then
+        local joinExpires = os.clock() + 5
+
+        repeat
+            task.wait(0.2)
+        until self.Teleporting
+            or exitFrame and exitFrame.Visible
+            or not self.Running
+            or self.Token ~= token
+            or os.clock() >= joinExpires
+
+        if self.Teleporting or self:WaitForTeleport(token, 20) then
             return true
         end
 
         self.Stats.Retries += 1
         pcall(flow.LobbyServer.exit)
+
+        if flow.LobbyClient and type(flow.LobbyClient.forceLeave_event) == "function" then
+            pcall(flow.LobbyClient.forceLeave_event)
+        end
+
         task.wait(attempt * 2)
     end
 
-    return false, "Game creation timed out"
+    self:SetPhase("Refreshing Lobby", "Game creation timed out")
+
+    local requeued, requeueError = self:QueueTeleport("lobby retry", self.LobbyPlaceId)
+
+    if not requeued then
+        return false, requeueError
+    end
+
+    local teleported, teleportError = pcall(
+        game:GetService("TeleportService").Teleport,
+        game:GetService("TeleportService"),
+        self.LobbyPlaceId,
+        player
+    )
+
+    if not teleported then
+        return false, tostring(teleportError)
+    end
+
+    if self:WaitForTeleport(token, 30) then
+        return true, "Teleporting"
+    end
+
+    return false, "Lobby refresh did not start"
 end
 
 function library.AutoFarm:ReachGate(token)
@@ -6021,9 +6119,7 @@ function library.AutoFarm:IsGatePassageOpen(passage)
 
             passage.Position = Vector3.new(midpoint.X, passage.Position.Y, midpoint.Z)
 
-            if difference.Magnitude - leftHalf - rightHalf < 12 then
-                return false
-            end
+            return difference.Magnitude - leftHalf - rightHalf >= 12
         end
     end
 
@@ -6367,6 +6463,7 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
     self:SetPhase("Waiting for Gate", "God Mode and NPC clearing are active")
 
     repeat
+        self.RunHeartbeat = os.clock()
         local endFrame = self:GetEndScreen()
 
         if endFrame then
@@ -6410,10 +6507,11 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
 
         self:UpdateUI()
 
-        local passageOpen = self:IsGatePassageOpen(self.GatePassage)
-        local gateWindowOpen = self:IsGateWindowOpen()
+        local passageRead, passageOpen = pcall(self.IsGatePassageOpen, self, self.GatePassage)
+        local windowRead, gateWindowOpen = pcall(self.IsGateWindowOpen, self)
+        local timedOpen = self.GateStartedAt > 0 and elapsed >= 120
 
-        if passageOpen or gateWindowOpen then
+        if passageRead and passageOpen or windowRead and gateWindowOpen or timedOpen then
             self:ReleaseSafeZone()
             return true
         end
@@ -6710,20 +6808,42 @@ function library.AutoFarm:Run(token)
 
     self.RunActive = true
     self.ActiveRunToken = token
+    self.RunHeartbeat = os.clock()
     local failures = 0
 
     while self.Running and self.Token == token and not library.Unloaded do
-        local context = self:GetContext()
-        local ok
-        local message
+        self.RunHeartbeat = os.clock()
+        local executed, ok, message = xpcall(function()
+            local context = self:GetContext()
 
-        if context == "Lobby" then
-            ok, message = self:RunLobby(token)
-        elseif context == "Game" then
-            ok, message = self:RunGame(token)
-        else
+            if context == "Lobby" then
+                return self:RunLobby(token)
+            end
+
+            if context == "Game" then
+                return self:RunGame(token)
+            end
+
+            return false, "Unsupported place: " .. tostring(game.PlaceId)
+        end, function(message)
+            if type(debug) == "table" and type(debug.traceback) == "function" then
+                local read, trace = pcall(debug.traceback, tostring(message), 2)
+
+                if read and type(trace) == "string" then
+                    return trace
+                end
+            end
+
+            return tostring(message)
+        end)
+
+        if not executed then
+            message = ok
             ok = false
-            message = "Unsupported place: " .. tostring(game.PlaceId)
+            self:ReleaseSafeZone()
+            self:SetCrossNoclip(false)
+            self.ResultBusy = false
+            self.ReplayRequested = false
         end
 
         if ok and message == "Replay" and not self.Teleporting and self.Running and self.Token == token then
@@ -6752,6 +6872,7 @@ function library.AutoFarm:Run(token)
         local expires = os.clock() + math.min(delay * failures, 30)
 
         repeat
+            self.RunHeartbeat = os.clock()
             task.wait(0.25)
         until not self.Running or self.Token ~= token or os.clock() >= expires
     end
@@ -6775,11 +6896,14 @@ function library.AutoFarm:Start()
 
     self.ResumeRequested = false
     self.Running = true
+    self.RunActive = false
+    self.ActiveRunToken = nil
     self.Teleporting = false
     self.QueueJob = nil
     self.ResultBusy = false
     self.ResultFinalized = false
     self.ReplayRequested = false
+    self.RunHeartbeat = os.clock()
     self.TransitionToken = ""
     self.ExpectedPlaceId = 0
     self.TransitionAt = 0
@@ -6833,6 +6957,29 @@ function library.AutoFarm:Start()
         end
     end)
 
+    task.spawn(function()
+        local token = self.Token
+
+        while self.Running and self.Token == token and not library.Unloaded do
+            local endFrame = self:GetEndScreen()
+
+            if endFrame
+                and not self.ResultBusy
+                and (not self.RunActive or os.clock() - self.RunHeartbeat >= 1.5)
+            then
+                self:ReleaseSafeZone()
+                self:SetCrossNoclip(false)
+                self.RunActive = false
+                self.ActiveRunToken = nil
+                self.RunHeartbeat = os.clock()
+                self:SetPhase("Recovering", "Handling the result screen")
+                task.spawn(self.Run, self, token)
+            end
+
+            task.wait(0.2)
+        end
+    end)
+
     task.spawn(self.Run, self, self.Token)
 end
 
@@ -6848,6 +6995,8 @@ function library.AutoFarm:Stop(silent)
     self.Running = false
     self.ResumeRequested = false
     self.Token = nil
+    self.RunActive = false
+    self.ActiveRunToken = nil
     self.Teleporting = false
     self.QueueJob = nil
     self.TransitionToken = ""
@@ -6859,6 +7008,7 @@ function library.AutoFarm:Stop(silent)
     self.ResultBusy = false
     self.ResultFinalized = false
     self.ReplayRequested = false
+    self.RunHeartbeat = 0
     self.LastGameJob = ""
     self.RunStartedAt = 0
     self.RunCashStart = 0
