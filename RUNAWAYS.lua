@@ -4461,7 +4461,7 @@ library.AutoFarm = {
     SessionKey = "RUNAWAYS_AUTO_FARM_SESSION",
     TransitionKey = "RUNAWAYS_AUTO_FARM_TRANSITION",
     TeleportLoader = [[
--- loadstring(game:HttpGet(""))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/RUNAWAYS.lua"))()
 ]],
     Running = false,
     ResumeRequested = false,
