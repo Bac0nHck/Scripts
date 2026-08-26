@@ -4488,6 +4488,12 @@ library.AutoFarm = {
     PendingFinish = false,
     FinishCrossed = false,
     PendingAt = 0,
+    ResultBusy = false,
+    ResultFinalized = false,
+    ReplayRequested = false,
+    SafeCFrame = nil,
+    SafeCharacter = nil,
+    SafeRootAnchored = nil,
     LastGameJob = "",
     LastSnapshot = nil,
     LastPersistAt = 0,
@@ -4500,6 +4506,8 @@ library.AutoFarm = {
         LobbyDelay = 3,
         GateTimeout = 165,
         RetryDelay = 10,
+        SafeGateWait = true,
+        AutoReplay = true,
     },
     Webhook = {
         Enabled = false,
@@ -4520,6 +4528,7 @@ library.AutoFarm = {
         GateActivations = 0,
         NPCAttacks = 0,
         Retries = 0,
+        Replays = 0,
         CashEarned = 0,
         TotalRunTime = 0,
         BestRun = 0,
@@ -4668,7 +4677,7 @@ function library.AutoFarm:UpdateUI()
     self:SetLabel("Queue", "Queue: " .. self.QueueStatus .. " | Mode: " .. queueMode)
     self:SetLabel("Session", "Session: " .. self:FormatDuration(elapsed) .. " | Credz: +" .. tostring(math.floor(self.Stats.CashEarned)))
     self:SetLabel("Runs", string.format("Runs: %d completed / %d attempts | %.1f%%", completed, attempts, successRate))
-    self:SetLabel("Failures", "Failures: " .. self.Stats.Failed .. " | Retries: " .. self.Stats.Retries .. " | Teleports: " .. self.Stats.Teleports)
+    self:SetLabel("Failures", "Failures: " .. self.Stats.Failed .. " | Retries: " .. self.Stats.Retries .. " | Replay votes: " .. self.Stats.Replays .. " | Teleports: " .. self.Stats.Teleports)
     self:SetLabel("Timing", "Average: " .. self:FormatDuration(average) .. " | Best: " .. self:FormatDuration(self.Stats.BestRun) .. " | Last: " .. self:FormatDuration(self.Stats.LastRun))
     self:SetLabel("Combat", "NPC attack requests: " .. self.Stats.NPCAttacks .. " | Gate activations: " .. self.Stats.GateActivations)
     self:SetLabel("Run", "Current run: " .. self:FormatDuration(runElapsed) .. " | Gate: " .. self.GateText)
@@ -4695,6 +4704,7 @@ function library.AutoFarm:ResetStats()
         GateActivations = 0,
         NPCAttacks = 0,
         Retries = 0,
+        Replays = 0,
         CashEarned = 0,
         TotalRunTime = 0,
         BestRun = 0,
@@ -4745,6 +4755,8 @@ function library.AutoFarm:GetSnapshot()
             LobbyDelay = options.RunawaysAutoFarmLobbyDelay and options.RunawaysAutoFarmLobbyDelay.Value or self.Config.LobbyDelay,
             GateTimeout = options.RunawaysAutoFarmGateTimeout and options.RunawaysAutoFarmGateTimeout.Value or self.Config.GateTimeout,
             RetryDelay = options.RunawaysAutoFarmRetryDelay and options.RunawaysAutoFarmRetryDelay.Value or self.Config.RetryDelay,
+            SafeGateWait = self.Config.SafeGateWait,
+            AutoReplay = self.Config.AutoReplay,
         },
         Webhook = {
             Enabled = toggles.RunawaysAutoFarmWebhook and toggles.RunawaysAutoFarmWebhook.Value or self.Webhook.Enabled,
@@ -4806,6 +4818,14 @@ function library.AutoFarm:ApplyPreferences(snapshot)
         self.Config.LobbyDelay = tonumber(snapshot.Config.LobbyDelay) or self.Config.LobbyDelay
         self.Config.GateTimeout = tonumber(snapshot.Config.GateTimeout) or self.Config.GateTimeout
         self.Config.RetryDelay = tonumber(snapshot.Config.RetryDelay) or self.Config.RetryDelay
+
+        if type(snapshot.Config.SafeGateWait) == "boolean" then
+            self.Config.SafeGateWait = snapshot.Config.SafeGateWait
+        end
+
+        if type(snapshot.Config.AutoReplay) == "boolean" then
+            self.Config.AutoReplay = snapshot.Config.AutoReplay
+        end
     end
 
     if type(snapshot.Webhook) == "table" then
@@ -4977,6 +4997,14 @@ function library.AutoFarm:ApplyStoredOptions()
         options.RunawaysAutoFarmRetryDelay:SetValue(self.Config.RetryDelay)
     end
 
+    if toggles.RunawaysAutoFarmSafeGateWait then
+        toggles.RunawaysAutoFarmSafeGateWait:SetValue(self.Config.SafeGateWait)
+    end
+
+    if toggles.RunawaysAutoFarmAutoReplay then
+        toggles.RunawaysAutoFarmAutoReplay:SetValue(self.Config.AutoReplay)
+    end
+
     if options.RunawaysAutoFarmWebhookURL then
         options.RunawaysAutoFarmWebhookURL:SetValue(self.Webhook.URL)
     end
@@ -5016,7 +5044,12 @@ function library.AutoFarm:BuildWebhook(event, detail)
                     },
                     {
                         name = "Runs",
-                        value = string.format("%d completed / %d attempts", self.Stats.Completed, self.Stats.Attempts),
+                        value = string.format(
+                            "%d completed / %d attempts | %d replay votes",
+                            self.Stats.Completed,
+                            self.Stats.Attempts,
+                            self.Stats.Replays
+                        ),
                         inline = true,
                     },
                     {
@@ -5255,6 +5288,77 @@ function library.AutoFarm:WaitForTeleport(token, duration)
     return self.Teleporting and self.TeleportFailureGeneration == failureGeneration
 end
 
+function library.AutoFarm:GetEndScreen()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local endFrame = playerGui and playerGui:FindFirstChild("EndFrame")
+
+    if not endFrame or not endFrame.Enabled then
+        return
+    end
+
+    local frame = endFrame:FindFirstChild("Frame")
+    local outcomeFrame = frame and frame:FindFirstChild("Outcome")
+    local escaped = outcomeFrame and outcomeFrame:FindFirstChild("Escaped")
+    local captured = outcomeFrame and outcomeFrame:FindFirstChild("Captured")
+    local outcome = escaped and escaped.Visible and "Escaped"
+        or captured and captured.Visible and "Captured"
+        or "Ended"
+
+    return endFrame, outcome
+end
+
+function library.AutoFarm:FinalizeRun(outcome, detail)
+    local duration = self.RunStartedAt > 0 and math.max(0, os.time() - self.RunStartedAt) or 0
+    local earned = math.max(0, self:GetCash() - self.RunCashStart)
+    local active = self.RunStartedAt > 0
+
+    self:ReleaseSafeZone()
+    self.ResultFinalized = true
+
+    if active then
+        self.Stats.CashEarned += earned
+    end
+
+    if active and outcome == "Escaped" then
+        self.Stats.Completed += 1
+        self.Stats.LastRun = duration
+        self.Stats.TotalRunTime += duration
+
+        if self.Stats.BestRun == 0 or duration < self.Stats.BestRun then
+            self.Stats.BestRun = duration
+        end
+    elseif active then
+        self.Stats.Failed += 1
+    end
+
+    self.PendingFinish = false
+    self.FinishCrossed = false
+    self.PendingAt = 0
+    self.RunStartedAt = 0
+    self.RunCashStart = self:GetCash()
+    self.GateStartedAt = 0
+    self.GatePassage = nil
+    self.GateText = "--"
+
+    if outcome == "Escaped" then
+        self.LastError = "None"
+        self:SetPhase("Run Completed", (detail or "Finish confirmed") .. " | +" .. tostring(math.floor(earned)) .. " Credz")
+        self:Persist()
+
+        if active then
+            self:SendWebhook("Run Completed", self.Detail)
+        end
+    else
+        self.LastError = "Run captured"
+        self:SetPhase("Run Captured", detail or "Preparing the next run")
+        self:Persist()
+
+        if active then
+            self:SendWebhook("Error", self.LastError)
+        end
+    end
+end
+
 function library.AutoFarm:CompletePending()
     if not self.PendingFinish then
         return
@@ -5274,29 +5378,173 @@ function library.AutoFarm:CompletePending()
         return
     end
 
-    local duration = self.RunStartedAt > 0 and math.max(0, os.time() - self.RunStartedAt) or 0
-    local earned = math.max(0, self:GetCash() - self.RunCashStart)
+    self:FinalizeRun("Escaped", "Returned to lobby")
+end
 
-    self.Stats.Completed += 1
-    self.Stats.LastRun = duration
-    self.Stats.TotalRunTime += duration
-    self.Stats.CashEarned += earned
-
-    if self.Stats.BestRun == 0 or duration < self.Stats.BestRun then
-        self.Stats.BestRun = duration
+function library.AutoFarm:HandleEndScreen(token)
+    if self.ResultBusy then
+        return false, "Result is already being handled"
     end
 
-    self.PendingFinish = false
-    self.FinishCrossed = false
-    self.PendingAt = 0
-    self.RunStartedAt = 0
-    self.RunCashStart = self:GetCash()
-    self.GateStartedAt = 0
-    self.GateText = "--"
-    self.LastError = "None"
-    self:SetPhase("Run Completed", "Returned to lobby | +" .. tostring(math.floor(earned)) .. " Credz")
-    self:Persist()
-    self:SendWebhook("Run Completed", self.Detail)
+    local endFrame, outcome = self:GetEndScreen()
+
+    if not endFrame then
+        return false, "Result screen is unavailable"
+    end
+
+    self.ResultBusy = true
+    self:ReleaseSafeZone()
+    local resultMap = workspace:FindFirstChild("Map")
+    local resultCharacter = player.Character
+    local resultRoot = resultCharacter and resultCharacter:FindFirstChild("HumanoidRootPart")
+    local resultPosition = resultRoot and resultRoot.Position
+    local resultPrompt = teleports:GetEndPrompt()
+    local resultPromptEnabled = resultPrompt and resultPrompt.Enabled
+
+    if outcome == "Ended" then
+        local outcomeExpires = os.clock() + 2
+
+        repeat
+            task.wait(0.1)
+            endFrame, outcome = self:GetEndScreen()
+        until outcome ~= "Ended"
+            or not endFrame
+            or not self.Running
+            or self.Token ~= token
+            or os.clock() >= outcomeExpires
+    end
+
+    outcome = outcome == "Escaped" and "Escaped" or "Captured"
+
+    if self.RunStartedAt > 0 then
+        task.wait(1)
+    end
+
+    if not self.Running or self.Token ~= token or library.Unloaded then
+        self.ResultBusy = false
+        return true, "Stopped"
+    end
+
+    self:FinalizeRun(outcome, outcome == "Escaped" and "Finish confirmed" or "The run ended before the finish")
+
+    if not self.Running or self.Token ~= token then
+        self.ResultBusy = false
+        return true, "Stopped"
+    end
+
+    local frame = endFrame and endFrame:FindFirstChild("Frame")
+    local buttons = frame and frame:FindFirstChild("Options")
+    local replayButton = buttons and buttons:FindFirstChild("Replay")
+    local autoReplay = self.Config.AutoReplay
+
+    if toggles.RunawaysAutoFarmAutoReplay then
+        autoReplay = toggles.RunawaysAutoFarmAutoReplay.Value == true
+    end
+
+    if autoReplay
+        and replayButton
+        and replayButton.Visible
+        and flow.GameManager
+        and type(flow.GameManager.Replay) == "function"
+    then
+        local queued, queueError = self:QueueTeleport("replay", self.GamePlaceId)
+
+        if queued then
+            self.ReplayRequested = true
+            local called, replayError = pcall(flow.GameManager.Replay)
+
+            if called then
+                self.Stats.Replays += 1
+                self:SetPhase("Auto Replay", "Replay vote submitted")
+                self:Persist()
+
+                local expires = os.clock() + 45
+                local hiddenAt
+
+                repeat
+                    if self.Teleporting then
+                        return true, "Teleporting"
+                    end
+
+                    if not endFrame.Parent or not endFrame.Enabled then
+                        hiddenAt = hiddenAt or os.clock()
+                        local currentMap = workspace:FindFirstChild("Map")
+                        local currentCharacter = player.Character
+                        local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+                        local currentPrompt = teleports:GetEndPrompt()
+                        local reset = currentMap and currentMap ~= resultMap
+                            or currentCharacter and currentCharacter ~= resultCharacter
+                            or currentPrompt and currentPrompt ~= resultPrompt
+                            or resultPrompt
+                                and not resultPromptEnabled
+                                and currentPrompt
+                                and currentPrompt.Enabled
+                            or resultPosition
+                                and currentRoot
+                                and (currentRoot.Position - resultPosition).Magnitude >= 500
+
+                        if reset and os.clock() - hiddenAt >= 0.5 then
+                            self.LastGameJob = ""
+                            self.ReplayRequested = false
+                            self.ResultBusy = false
+                            self.QueueJob = nil
+                            self.QueueStatus = "Replay started"
+                            self:Persist()
+                            task.wait(1)
+                            return true, "Replay"
+                        end
+                    else
+                        hiddenAt = nil
+                    end
+
+                    task.wait(0.2)
+                until not self.Running
+                    or self.Token ~= token
+                    or library.Unloaded
+                    or os.clock() >= expires
+            else
+                self.LastError = tostring(replayError)
+            end
+        else
+            self.LastError = tostring(queueError)
+        end
+    end
+
+    self.ReplayRequested = false
+
+    if not self.Running or self.Token ~= token then
+        self.ResultBusy = false
+        return true, "Stopped"
+    end
+
+    if not flow.GameManager or type(flow.GameManager.BackToLobby) ~= "function" then
+        self.ResultBusy = false
+        return false, "Lobby return is unavailable"
+    end
+
+    local queued, queueError = self:QueueTeleport("lobby", self.LobbyPlaceId)
+
+    if not queued then
+        self.ResultBusy = false
+        return false, queueError
+    end
+
+    local called, lobbyError = pcall(flow.GameManager.BackToLobby)
+
+    if not called then
+        self.ResultBusy = false
+        return false, tostring(lobbyError)
+    end
+
+    self:SetPhase("Returning to Lobby", "Replay was unavailable")
+
+    if self:WaitForTeleport(token, 30) then
+        return true, "Teleporting"
+    end
+
+    self.ResultBusy = false
+
+    return false, "Lobby teleport did not start"
 end
 
 function library.AutoFarm:RunLobby(token)
@@ -5837,6 +6085,183 @@ function library.AutoFarm:ActivateGate(prompt, direction, token)
     return false, records, "Gate activation was not confirmed"
 end
 
+function library.AutoFarm:GetSafeCFrame()
+    local passage = self.GatePassage
+
+    if not passage or typeof(passage.Position) ~= "Vector3" then
+        return
+    end
+
+    local finalDoor = passage.FinalDoor
+    local customsBuilding = finalDoor and finalDoor:FindFirstAncestor("CustomsBuilding")
+    local prompt = teleports:GetEndPrompt()
+    local holder = prompt and prompt.Parent
+    local promptPosition = holder and holder:IsA("Attachment") and holder.WorldPosition
+        or holder and holder:IsA("BasePart") and holder.Position
+        or passage.Position
+    local bestFloor
+    local bestDistance = math.huge
+
+    if customsBuilding then
+        for _, office in customsBuilding:GetChildren() do
+            if office.Name == "CustomsOffice" then
+                local floor = office:FindFirstChild("Floor", true)
+
+                if floor and floor:IsA("BasePart") then
+                    local distance = (floor.Position - promptPosition).Magnitude
+
+                    if distance < bestDistance then
+                        bestFloor = floor
+                        bestDistance = distance
+                    end
+                end
+            end
+        end
+    end
+
+    if bestFloor then
+        local position = bestFloor.CFrame:PointToWorldSpace(Vector3.new(5, bestFloor.Size.Y * 0.5 + 3.25, 8))
+        local rayParameters = RaycastParams.new()
+        local overlapParameters = OverlapParams.new()
+
+        rayParameters.FilterType = Enum.RaycastFilterType.Exclude
+        rayParameters.FilterDescendantsInstances = player.Character and { player.Character } or {}
+        rayParameters.RespectCanCollide = true
+        overlapParameters.FilterType = Enum.RaycastFilterType.Exclude
+        overlapParameters.FilterDescendantsInstances = player.Character and { player.Character } or {}
+
+        local floorHit = workspace:Raycast(position, -Vector3.yAxis * 6, rayParameters)
+        local roofHit = workspace:Raycast(position, Vector3.yAxis * 30, rayParameters)
+        local blocked = false
+
+        for _, part in workspace:GetPartBoundsInBox(CFrame.new(position), Vector3.new(3.5, 5.5, 3.5), overlapParameters) do
+            if part.CanCollide and part ~= bestFloor then
+                blocked = true
+                break
+            end
+        end
+
+        if floorHit and roofHit and not blocked then
+            return CFrame.lookAt(
+                position,
+                Vector3.new(promptPosition.X, position.Y, promptPosition.Z),
+                Vector3.yAxis
+            )
+        end
+    end
+
+end
+
+function library.AutoFarm:DisengageHelicopter()
+    if flow.PoliceHeli and type(flow.PoliceHeli.Despawn) == "function" then
+        pcall(flow.PoliceHeli.Despawn)
+    end
+end
+
+function library.AutoFarm:ReleaseSafeZone()
+    local character = self.SafeCharacter
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if root and self.SafeRootAnchored ~= nil then
+        root.Anchored = self.SafeRootAnchored
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    self.SafeCFrame = nil
+    self.SafeCharacter = nil
+    self.SafeRootAnchored = nil
+end
+
+function library.AutoFarm:MoveToSafeZone(token)
+    if not self.Config.SafeGateWait then
+        self:ReleaseSafeZone()
+        return true
+    end
+
+    if not self.Running or self.Token ~= token then
+        return false, "Auto Farm stopped"
+    end
+
+    local destination = self:GetSafeCFrame()
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not destination or not humanoid or not root or humanoid.Health <= 0 then
+        return false, "Safe gate position is unavailable"
+    end
+
+    self:ReleaseSafeZone()
+    self.SafeCharacter = character
+    self.SafeRootAnchored = root.Anchored
+    self.SafeCFrame = destination
+
+    local moved = teleports:Move(destination, nil, false)
+
+    if not moved then
+        self:ReleaseSafeZone()
+        return false, "Could not enter the safe gate position"
+    end
+
+    if not self.Running or self.Token ~= token or library.Unloaded then
+        self:ReleaseSafeZone()
+        return false, "Auto Farm stopped"
+    end
+
+    if not self.Config.SafeGateWait then
+        self:ReleaseSafeZone()
+        return true
+    end
+
+    if player.Character ~= character or self.SafeCharacter ~= character or self.SafeCFrame ~= destination then
+        self:ReleaseSafeZone()
+        return false, "Character changed while entering the safe zone"
+    end
+
+    root = character:FindFirstChild("HumanoidRootPart")
+
+    if not root then
+        self:ReleaseSafeZone()
+        return false, "Character changed while entering the safe zone"
+    end
+
+    root.CFrame = destination
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    root.Anchored = true
+    self:DisengageHelicopter()
+    self:SetPhase("Safe Gate Wait", "Protected from the helicopter until the gate opens")
+
+    return true
+end
+
+function library.AutoFarm:MaintainSafeZone(token)
+    if not self.Config.SafeGateWait then
+        self:ReleaseSafeZone()
+        return true
+    end
+
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if character ~= self.SafeCharacter or not self.SafeCFrame then
+        return self:MoveToSafeZone(token)
+    end
+
+    if not humanoid or not root or humanoid.Health <= 0 then
+        return false, "Character is unavailable in the safe zone"
+    end
+
+    root.CFrame = self.SafeCFrame
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    root.Anchored = true
+
+    return true
+end
+
 function library.AutoFarm:WaitForGate(token, prompt, records)
     local timeout = options.RunawaysAutoFarmGateTimeout and options.RunawaysAutoFarmGateTimeout.Value or self.Config.GateTimeout
     local expires = os.clock() + timeout
@@ -5844,6 +6269,38 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
     self:SetPhase("Waiting for Gate", "God Mode and NPC clearing are active")
 
     repeat
+        local endFrame = self:GetEndScreen()
+
+        if endFrame then
+            self:ReleaseSafeZone()
+            local _, result = self:HandleEndScreen(token)
+
+            return false, result
+        end
+
+        local safe, safeError = self:MaintainSafeZone(token)
+
+        if not safe then
+            self:ReleaseSafeZone()
+
+            local resultExpires = os.clock() + 4
+
+            repeat
+                if self:GetEndScreen() then
+                    local _, result = self:HandleEndScreen(token)
+
+                    return false, result
+                end
+
+                task.wait(0.1)
+            until not self.Running
+                or self.Token ~= token
+                or library.Unloaded
+                or os.clock() >= resultExpires
+
+            return false, safeError
+        end
+
         local elapsed = math.max(0, os.time() - self.GateStartedAt)
         local seconds, text = self:GetGateTimer(prompt)
 
@@ -5859,14 +6316,17 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
         local passageOpen = self:IsGatePassageOpen(self.GatePassage)
 
         if elapsed >= 105 and moving then
+            self:ReleaseSafeZone()
             return true
         end
 
         if elapsed >= 110 and passageOpen then
+            self:ReleaseSafeZone()
             return true
         end
 
         if seconds and seconds <= 0 and (moving or passageOpen) then
+            self:ReleaseSafeZone()
             return true
         end
 
@@ -5878,14 +6338,21 @@ function library.AutoFarm:WaitForGate(token, prompt, records)
     until not self.Running or self.Token ~= token or library.Unloaded or os.clock() >= expires
 
     if not self.Running or self.Token ~= token then
+        self:ReleaseSafeZone()
         return false, "Auto Farm stopped"
     end
+
+    self:ReleaseSafeZone()
 
     return false, "Gate wait timed out"
 end
 
 function library.AutoFarm:SetCrossNoclip(value)
     if value then
+        if self.CrossCollisions then
+            return
+        end
+
         self.CrossCollisions = {}
 
         local character = player.Character
@@ -5911,7 +6378,36 @@ function library.AutoFarm:SetCrossNoclip(value)
     self.CrossCollisions = nil
 end
 
+function library.AutoFarm:WaitForFinishResult(token, duration)
+    local expires = os.clock() + duration
+
+    repeat
+        if self.Teleporting then
+            return true, "Teleporting"
+        end
+
+        local endFrame = self:GetEndScreen()
+
+        if endFrame then
+            self:SetCrossNoclip(false)
+            return self:HandleEndScreen(token)
+        end
+
+        task.wait(0.2)
+    until not self.Running
+        or self.Token ~= token
+        or library.Unloaded
+        or os.clock() >= expires
+
+    if not self.Running or self.Token ~= token then
+        return true, "Stopped"
+    end
+
+    return false, "Finish result did not appear"
+end
+
 function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
+    self:ReleaseSafeZone()
     self:SetPhase("Entering Finish", "Crossing the opened gate")
     self:SetCrossNoclip(true)
 
@@ -5930,6 +6426,9 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
         self:SetCrossNoclip(false)
         return false, "Gate passage is unavailable"
     end
+
+    teleports:Stream(passage.Position)
+    task.wait(0.4)
 
     for _, offset in { -10, -3, 6, 16, 32, 55, 85 } do
         if not self.Running or self.Token ~= token or library.Unloaded then
@@ -5953,23 +6452,35 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
 
         if self.Teleporting then
             self:SetCrossNoclip(false)
-            return true
+            return true, "Teleporting"
+        end
+
+        if self:GetEndScreen() then
+            self:SetCrossNoclip(false)
+            return self:HandleEndScreen(token)
         end
     end
 
     humanoid:MoveTo(passage.Position + Vector3.new(0, 0, direction * 110))
 
-    if self:WaitForTeleport(token, 30) then
-        return true
+    local handled, result = self:WaitForFinishResult(token, 35)
+
+    if handled then
+        return true, result
     end
 
     self:SetCrossNoclip(false)
 
-    return false, "Finish teleport did not start"
+    return false, result
 end
 
 function library.AutoFarm:RunGame(token)
+    if self:GetEndScreen() then
+        return self:HandleEndScreen(token)
+    end
+
     if self.LastGameJob ~= game.JobId then
+        self:ReleaseSafeZone()
         self.LastGameJob = game.JobId
         self.RunStartedAt = os.time()
         self.RunCashStart = self:GetCash()
@@ -5978,6 +6489,9 @@ function library.AutoFarm:RunGame(token)
         self.PendingFinish = false
         self.FinishCrossed = false
         self.PendingAt = 0
+        self.ResultBusy = false
+        self.ResultFinalized = false
+        self.ReplayRequested = false
         self.Stats.Attempts += 1
         self:Persist()
         self:SendWebhook("Run Started", "Gameplay server joined")
@@ -6036,6 +6550,10 @@ function library.AutoFarm:RunGame(token)
     local opened, gateError = self:WaitForGate(token, prompt, records)
 
     if not opened then
+        if gateError == "Replay" or gateError == "Teleporting" or gateError == "Stopped" then
+            return true, gateError
+        end
+
         return false, gateError
     end
 
@@ -6056,7 +6574,7 @@ function library.AutoFarm:RunGame(token)
         local crossed, crossError = self:CrossGate(token, prompt, direction, endZ)
 
         if crossed then
-            return true
+            return true, crossError
         end
 
         if not self.Running or self.Token ~= token then
@@ -6071,6 +6589,7 @@ function library.AutoFarm:RunGame(token)
     self.PendingFinish = false
     self.FinishCrossed = false
     self.PendingAt = 0
+    self:ReleaseSafeZone()
 
     return false, "Could not enter the finish"
 end
@@ -6111,13 +6630,23 @@ function library.AutoFarm:Run(token)
             message = "Unsupported place: " .. tostring(game.PlaceId)
         end
 
+        if ok and message == "Replay" and not self.Teleporting and self.Running and self.Token == token then
+            failures = 0
+            task.wait(1)
+            continue
+        end
+
         if ok or self.Teleporting or not self.Running or self.Token ~= token then
             self:ReleaseRun(token)
             return
         end
 
         failures += 1
-        self.Stats.Failed += 1
+
+        if not self.ResultFinalized then
+            self.Stats.Failed += 1
+        end
+
         self.LastError = tostring(message or "Unknown error")
         self:SetPhase("Retrying", self.LastError)
         self:Persist()
@@ -6152,6 +6681,9 @@ function library.AutoFarm:Start()
     self.Running = true
     self.Teleporting = false
     self.QueueJob = nil
+    self.ResultBusy = false
+    self.ResultFinalized = false
+    self.ReplayRequested = false
     self.TransitionToken = ""
     self.ExpectedPlaceId = 0
     self.TransitionAt = 0
@@ -6228,6 +6760,9 @@ function library.AutoFarm:Stop(silent)
     self.PendingFinish = false
     self.FinishCrossed = false
     self.PendingAt = 0
+    self.ResultBusy = false
+    self.ResultFinalized = false
+    self.ReplayRequested = false
     self.LastGameJob = ""
     self.RunStartedAt = 0
     self.RunCashStart = 0
@@ -6235,6 +6770,7 @@ function library.AutoFarm:Stop(silent)
     self.GatePassage = nil
     self.GateText = "--"
     self.QueueStatus = "Disabled"
+    self:ReleaseSafeZone()
     self:SetCrossNoclip(false)
 
     if not toggles.RunawaysPlayerGodMode or not toggles.RunawaysPlayerGodMode.Value then
@@ -6260,7 +6796,11 @@ function library.AutoFarm:Destroy(preserve)
     self.Token = nil
     self.RunActive = false
     self.ActiveRunToken = nil
+    self.ResultBusy = false
+    self.ResultFinalized = false
+    self.ReplayRequested = false
     self.WebhookGeneration += 1
+    self:ReleaseSafeZone()
     self:SetCrossNoclip(false)
 
     if self.TeleportConnection then
@@ -6367,6 +6907,34 @@ library.AutoFarm.ControlBox:AddToggle("RunawaysAutoFarm", {
     end,
 })
 
+library.AutoFarm.ControlBox:AddToggle("RunawaysAutoFarmSafeGateWait", {
+    Text = "Safe Gate Wait",
+    Default = true,
+    Callback = function(value)
+        library.AutoFarm.Config.SafeGateWait = value
+
+        if not value then
+            library.AutoFarm:ReleaseSafeZone()
+        end
+
+        if library.AutoFarm.StateReady then
+            library.AutoFarm:Persist()
+        end
+    end,
+})
+
+library.AutoFarm.ControlBox:AddToggle("RunawaysAutoFarmAutoReplay", {
+    Text = "Auto Replay",
+    Default = true,
+    Callback = function(value)
+        library.AutoFarm.Config.AutoReplay = value
+
+        if library.AutoFarm.StateReady then
+            library.AutoFarm:Persist()
+        end
+    end,
+})
+
 library.AutoFarm.ControlBox:AddSlider("RunawaysAutoFarmLobbyDelay", {
     Text = "Delay Between Runs",
     Default = 3,
@@ -6422,7 +6990,7 @@ end)
 
 library.AutoFarm.Labels.Session = library.AutoFarm.StatsBox:AddLabel("Session: 00:00:00 | Credz: +0", true)
 library.AutoFarm.Labels.Runs = library.AutoFarm.StatsBox:AddLabel("Runs: 0 completed / 0 attempts | 0.0%", true)
-library.AutoFarm.Labels.Failures = library.AutoFarm.StatsBox:AddLabel("Failures: 0 | Retries: 0 | Teleports: 0", true)
+library.AutoFarm.Labels.Failures = library.AutoFarm.StatsBox:AddLabel("Failures: 0 | Retries: 0 | Replay votes: 0 | Teleports: 0", true)
 library.AutoFarm.Labels.Timing = library.AutoFarm.StatsBox:AddLabel("Average: 00:00:00 | Best: 00:00:00 | Last: 00:00:00", true)
 library.AutoFarm.Labels.Combat = library.AutoFarm.StatsBox:AddLabel("NPC attack requests: 0 | Gate activations: 0", true)
 
@@ -6508,13 +7076,18 @@ library.AutoFarm.TeleportFailedConnection = game:GetService("TeleportService").T
     library.AutoFarm.TeleportFailureGeneration += 1
     library.AutoFarm.Teleporting = false
     library.AutoFarm.QueueJob = nil
+    library.AutoFarm.ResultBusy = false
+    library.AutoFarm.ReplayRequested = false
     library.AutoFarm.Stats.Retries += 1
     library.AutoFarm.LastError = tostring(message or result)
     library.AutoFarm:SetCrossNoclip(false)
     library.AutoFarm:SetPhase("Teleport Failed", library.AutoFarm.LastError)
 
     if not runWasActive then
-        library.AutoFarm.Stats.Failed += 1
+        if not library.AutoFarm.ResultFinalized then
+            library.AutoFarm.Stats.Failed += 1
+        end
+
         library.AutoFarm:SendWebhook("Error", library.AutoFarm.LastError)
     end
 
