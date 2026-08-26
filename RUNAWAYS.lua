@@ -4781,12 +4781,12 @@ function library.AutoFarm:Persist()
     self.LastSnapshot = encoded
     self.LastPersistAt = os.clock()
 
-    pcall(function()
-        game:GetService("TeleportService"):SetTeleportSetting(self.StateKey, encoded)
-        game:GetService("TeleportService"):SetTeleportSetting(self.EnabledKey, self.Running)
-        game:GetService("TeleportService"):SetTeleportSetting(self.SessionKey, self.SessionId)
-        game:GetService("TeleportService"):SetTeleportSetting(self.TransitionKey, self.TransitionToken)
-    end)
+    local teleportService = game:GetService("TeleportService")
+
+    pcall(teleportService.SetTeleportSetting, teleportService, self.StateKey, encoded)
+    pcall(teleportService.SetTeleportSetting, teleportService, self.EnabledKey, self.Running)
+    pcall(teleportService.SetTeleportSetting, teleportService, self.SessionKey, self.SessionId)
+    pcall(teleportService.SetTeleportSetting, teleportService, self.TransitionKey, self.TransitionToken)
 
     if type(writefile) == "function" then
         if type(makefolder) == "function" then
@@ -4890,6 +4890,7 @@ end
 
 function library.AutoFarm:LoadState()
     local transitionToken = tostring(env.RunawaysAutoFarmTransitionToken or "")
+    local queuedState = env.RunawaysAutoFarmQueuedState
     local resumeBest
     local resumeUpdated = -1
     local resumeRevision = -1
@@ -4898,6 +4899,7 @@ function library.AutoFarm:LoadState()
     local preferenceRevision = -1
 
     env.RunawaysAutoFarmTransitionToken = nil
+    env.RunawaysAutoFarmQueuedState = nil
 
     local function consider(value)
         if type(value) == "string" then
@@ -4930,7 +4932,7 @@ function library.AutoFarm:LoadState()
 
         if transitionToken ~= ""
             and tostring(value.TransitionToken or "") == transitionToken
-            and tonumber(value.ExpectedPlaceId) == game.PlaceId
+            and (game.PlaceId == self.LobbyPlaceId or game.PlaceId == self.GamePlaceId)
             and transitionAt > 0
             and math.abs(os.time() - transitionAt) <= 900
             and tostring(value.SessionId or "") ~= ""
@@ -4943,6 +4945,8 @@ function library.AutoFarm:LoadState()
             resumeRevision = revision
         end
     end
+
+    consider(queuedState)
 
     pcall(function()
         consider(game:GetService("TeleportService"):GetTeleportSetting(self.StateKey))
@@ -4957,6 +4961,7 @@ function library.AutoFarm:LoadState()
     end
 
     if resumeBest and self:ApplySnapshot(resumeBest) and self.ResumeRequested then
+        self.ExpectedPlaceId = game.PlaceId
         return
     end
 
@@ -5193,35 +5198,46 @@ function library.AutoFarm:QueueTeleport(reason, expectedPlaceId)
     self.TransitionToken = transitionToken
     self.ExpectedPlaceId = expectedPlaceId
     self.TransitionAt = os.time()
-    self:Persist()
+
+    if not self:Persist() or type(self.LastSnapshot) ~= "string" then
+        return false, "Transition state is unavailable"
+    end
+
+    local snapshot = self.LastSnapshot
 
     local payload = string.format(
         "if not game:IsLoaded() then game.Loaded:Wait() end\n"
-            .. "if game.PlaceId == %d then\n"
+            .. "if game.PlaceId == %d or game.PlaceId == %d then\n"
             .. "local p = game:GetService(%q)\n"
             .. "while not p.LocalPlayer do task.wait() end\n"
             .. "local t = game:GetService(%q)\n"
-            .. "if t:GetTeleportSetting(%q) == %q and t:GetTeleportSetting(%q) == true and tostring(t:GetTeleportSetting(%q) or '') == %q then\n"
+            .. "if t:GetTeleportSetting(%q) ~= false then\n"
             .. "local e = getgenv and getgenv() or _G\n"
             .. "if e.RunawaysAutoFarmQueueExecution ~= %q then\n"
-            .. "e.RunawaysAutoFarmQueueExecution = %q\n"
+            .. "local s = false\n"
+            .. "for i = 1, 3 do\n"
             .. "e.RunawaysAutoFarmTransitionToken = %q\n"
+            .. "e.RunawaysAutoFarmQueuedState = %q\n"
+            .. "local o = pcall(function()\n"
             .. "%s\n"
+            .. "end)\n"
+            .. "if o then s = true break end\n"
+            .. "task.wait(i)\n"
+            .. "end\n"
+            .. "if s then e.RunawaysAutoFarmQueueExecution = %q end\n"
             .. "end\n"
             .. "end\n"
             .. "end",
-        expectedPlaceId,
+        self.LobbyPlaceId,
+        self.GamePlaceId,
         "Players",
         "TeleportService",
-        self.TransitionKey,
-        transitionToken,
         self.EnabledKey,
-        self.SessionKey,
-        tostring(self.SessionId),
         transitionToken,
         transitionToken,
-        transitionToken,
-        loader
+        snapshot,
+        loader,
+        transitionToken
     )
     local ok, message = pcall(queueFunction, payload)
 
