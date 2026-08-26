@@ -15,6 +15,58 @@ end
 local player = Players.LocalPlayer
 local env = getgenv and getgenv() or _G
 
+if env.RunawaysScriptLoading and env.RunawaysScriptLoading ~= coroutine.running() then
+    repeat
+        task.wait(0.1)
+    until not env.RunawaysScriptLoading
+        or env.AutoLoot
+        or os.clock() - (tonumber(env.RunawaysScriptLoadingAt) or 0) >= 60
+
+    if env.AutoLoot
+        and not env.AutoLoot.Unloaded
+        and (tostring(env.RunawaysAutoFarmTransitionToken or "") == ""
+            or env.RunawaysScriptLoadedTransition == tostring(env.RunawaysAutoFarmTransitionToken))
+    then
+        return env.AutoLoot
+    end
+end
+
+env.RunawaysScriptLoading = coroutine.running()
+env.RunawaysScriptLoadingAt = os.clock()
+env.RunawaysScriptLoadingToken = tostring(env.RunawaysAutoFarmTransitionToken or "")
+
+if env.RunawaysScriptLoadingToken ~= "" then
+    env.RunawaysScriptLatestTransition = nil
+
+    pcall(function()
+        env.RunawaysScriptLatestTransition = game:GetService("TeleportService"):GetTeleportSetting("RUNAWAYS_AUTO_FARM_TRANSITION")
+    end)
+
+    if env.RunawaysScriptLatestTransition ~= nil
+        and tostring(env.RunawaysScriptLatestTransition) ~= env.RunawaysScriptLoadingToken
+    then
+        env.RunawaysScriptLoading = nil
+        env.RunawaysScriptLoadingAt = nil
+        env.RunawaysScriptLoadingToken = nil
+        env.RunawaysScriptLatestTransition = nil
+        return env.AutoLoot
+    end
+
+    if env.RunawaysScriptLoadedTransition == env.RunawaysScriptLoadingToken
+        and env.AutoLoot
+        and not env.AutoLoot.Unloaded
+    then
+        env.RunawaysScriptLoading = nil
+        env.RunawaysScriptLoadingAt = nil
+        env.RunawaysScriptLoadingToken = nil
+        env.RunawaysScriptLatestTransition = nil
+        return env.AutoLoot
+    end
+
+end
+
+env.RunawaysScriptLatestTransition = nil
+
 if env.AutoLoot and type(env.AutoLoot.Unload) == "function" then
     env.RunawaysScriptReloading = true
     pcall(function()
@@ -51,6 +103,10 @@ local first, last = source:find(target, 1, true)
 assert(first, "Obsidian dropdown update is unavailable")
 
 source = source:sub(1, first - 1) .. replacement .. source:sub(last + 1)
+
+if env.RunawaysScriptLoading ~= coroutine.running() then
+    return env.AutoLoot
+end
 
 local library = loadstring(source)()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
@@ -4485,6 +4541,11 @@ library.AutoFarm = {
     StartedAt = 0,
     RunStartedAt = 0,
     RunCashStart = 0,
+    RunWinsStart = 0,
+    LastCredzBalance = nil,
+    LastWins = nil,
+    PendingCredz = 0,
+    PendingWins = 0,
     GateStartedAt = 0,
     PendingFinish = false,
     FinishCrossed = false,
@@ -4502,6 +4563,13 @@ library.AutoFarm = {
     LastWebhookAt = 0,
     WebhookGeneration = 0,
     TeleportFailureGeneration = 0,
+    TeleportRecoveryGeneration = 0,
+    TeleportRetryCount = 0,
+    TeleportRetryDelay = 0,
+    TeleportRetryTarget = 0,
+    TeleportRetryOptions = nil,
+    TeleportRecovering = false,
+    LastTeleportFailureAt = 0,
     Labels = {},
     Config = {
         LobbyDelay = 3,
@@ -4621,9 +4689,31 @@ function library.AutoFarm:GetRequestFunction()
     end
 end
 
-function library.AutoFarm:GetCash()
+function library.AutoFarm:GetDataValue(name)
+    if flow.LocalData and type(flow.LocalData.Get) == "function" then
+        local ok, value = pcall(flow.LocalData.Get, name)
+
+        if ok and type(value) == "number" then
+            return value
+        end
+    end
+
+    if flow.LocalData and type(flow.LocalData.GetValue) == "function" then
+        local ok, observer = pcall(flow.LocalData.GetValue, name)
+
+        if ok and observer then
+            local read, value = pcall(function()
+                return observer:get()
+            end)
+
+            if read and type(value) == "number" then
+                return value
+            end
+        end
+    end
+
     if flow.PlayerDataClient and type(flow.PlayerDataClient.getObserver) == "function" then
-        local ok, observer = pcall(flow.PlayerDataClient.getObserver, "coins")
+        local ok, observer = pcall(flow.PlayerDataClient.getObserver, name)
 
         if ok and observer and type(observer.get) == "function" then
             local read, value = pcall(observer.get, observer)
@@ -4633,10 +4723,63 @@ function library.AutoFarm:GetCash()
             end
         end
     end
+end
 
-    local ok, value = pcall(bringItems.GetCashAmount, bringItems)
+function library.AutoFarm:GetCash()
+    return self:GetDataValue("coins")
+end
 
-    return ok and tonumber(value) or 0
+function library.AutoFarm:GetWins()
+    return self:GetDataValue("wins")
+end
+
+function library.AutoFarm:GetEffectiveCredz()
+    return (tonumber(self.LastCredzBalance) or 0) + math.max(0, tonumber(self.PendingCredz) or 0)
+end
+
+function library.AutoFarm:GetEffectiveWins()
+    return (tonumber(self.LastWins) or 0) + math.max(0, tonumber(self.PendingWins) or 0)
+end
+
+function library.AutoFarm:SyncProgress(reset)
+    local credz = self:GetCash()
+    local wins = self:GetWins()
+
+    if type(credz) == "number" then
+        if reset or type(self.LastCredzBalance) ~= "number" then
+            self.LastCredzBalance = credz
+            self.PendingCredz = 0
+        elseif credz > self.LastCredzBalance then
+            local gained = credz - self.LastCredzBalance
+            local accounted = math.min(gained, math.max(0, tonumber(self.PendingCredz) or 0))
+
+            self.PendingCredz = math.max(0, self.PendingCredz - accounted)
+            self.Stats.CashEarned += gained - accounted
+            self.LastCredzBalance = credz
+        elseif credz < self.LastCredzBalance then
+            self.LastCredzBalance = credz
+            self.PendingCredz = 0
+        end
+    end
+
+    if type(wins) == "number" then
+        if reset or type(self.LastWins) ~= "number" then
+            self.LastWins = wins
+            self.PendingWins = 0
+        elseif wins > self.LastWins then
+            local gained = wins - self.LastWins
+            local accounted = math.min(gained, math.max(0, tonumber(self.PendingWins) or 0))
+
+            self.PendingWins = math.max(0, self.PendingWins - accounted)
+            self.Stats.Completed += gained - accounted
+            self.LastWins = wins
+        elseif wins < self.LastWins then
+            self.LastWins = wins
+            self.PendingWins = 0
+        end
+    end
+
+    return credz, wins
 end
 
 function library.AutoFarm:FormatDuration(value)
@@ -4662,6 +4805,10 @@ function library.AutoFarm:SetLabel(name, text)
 end
 
 function library.AutoFarm:UpdateUI()
+    if self.StateReady or self.Running then
+        self:SyncProgress()
+    end
+
     local now = os.time()
     local elapsed = self.StartedAt > 0 and now - self.StartedAt or 0
     local runElapsed = self.RunStartedAt > 0 and now - self.RunStartedAt or 0
@@ -4688,12 +4835,14 @@ end
 
 function library.AutoFarm:ResetStats()
     local runStartedAt = self.Running and self.RunStartedAt or 0
-    local runCashStart = self.Running and self.RunCashStart or self:GetCash()
+    local runCashStart = self:GetCash() or 0
+    local runWinsStart = self:GetWins() or 0
     local gateStartedAt = self.Running and self.GateStartedAt or 0
 
     self.StartedAt = os.time()
     self.RunStartedAt = runStartedAt
     self.RunCashStart = runCashStart
+    self.RunWinsStart = runWinsStart
     self.GateStartedAt = gateStartedAt
     self.LastError = "None"
     self.GateText = "--"
@@ -4711,11 +4860,19 @@ function library.AutoFarm:ResetStats()
         BestRun = 0,
         LastRun = 0,
     }
+    self.LastCredzBalance = runCashStart
+    self.LastWins = runWinsStart
+    self.PendingCredz = 0
+    self.PendingWins = 0
     self:Persist()
     self:UpdateUI()
 end
 
 function library.AutoFarm:GetSnapshot()
+    if self.StateReady or self.Running then
+        self:SyncProgress()
+    end
+
     local events = {}
 
     for name, value in self.Webhook.Events do
@@ -4744,6 +4901,11 @@ function library.AutoFarm:GetSnapshot()
         StartedAt = self.StartedAt,
         RunStartedAt = self.RunStartedAt,
         RunCashStart = self.RunCashStart,
+        RunWinsStart = self.RunWinsStart,
+        LastCredzBalance = self.LastCredzBalance,
+        LastWins = self.LastWins,
+        PendingCredz = self.PendingCredz,
+        PendingWins = self.PendingWins,
         GateStartedAt = self.GateStartedAt,
         PendingFinish = self.PendingFinish,
         FinishCrossed = self.FinishCrossed,
@@ -4858,6 +5020,11 @@ function library.AutoFarm:ApplySnapshot(snapshot)
     self.StartedAt = tonumber(snapshot.StartedAt) or 0
     self.RunStartedAt = tonumber(snapshot.RunStartedAt) or 0
     self.RunCashStart = tonumber(snapshot.RunCashStart) or 0
+    self.RunWinsStart = tonumber(snapshot.RunWinsStart) or 0
+    self.LastCredzBalance = tonumber(snapshot.LastCredzBalance)
+    self.LastWins = tonumber(snapshot.LastWins)
+    self.PendingCredz = math.max(0, tonumber(snapshot.PendingCredz) or 0)
+    self.PendingWins = math.max(0, tonumber(snapshot.PendingWins) or 0)
     self.GateStartedAt = tonumber(snapshot.GateStartedAt) or 0
     self.PendingFinish = snapshot.PendingFinish == true
     self.FinishCrossed = snapshot.FinishCrossed == true
@@ -4869,6 +5036,25 @@ function library.AutoFarm:ApplySnapshot(snapshot)
         for name, value in self.Stats do
             self.Stats[name] = tonumber(snapshot.Stats[name]) or value
         end
+    end
+
+    if type(self.LastCredzBalance) ~= "number" then
+        self.LastCredzBalance = self:GetCash()
+        self.PendingCredz = 0
+    end
+
+    if type(self.LastWins) ~= "number" then
+        self.LastWins = self:GetWins()
+        self.PendingWins = 0
+        self.Stats.Failed = 0
+    end
+
+    if self.RunCashStart <= 0 and type(self.LastCredzBalance) == "number" then
+        self.RunCashStart = self:GetEffectiveCredz()
+    end
+
+    if self.RunWinsStart <= 0 and type(self.LastWins) == "number" then
+        self.RunWinsStart = self:GetEffectiveWins()
     end
 
     self.ResumeRequested = self.SessionId ~= ""
@@ -4977,6 +5163,11 @@ function library.AutoFarm:LoadState()
     self.StartedAt = 0
     self.RunStartedAt = 0
     self.RunCashStart = 0
+    self.RunWinsStart = 0
+    self.LastCredzBalance = self:GetCash()
+    self.LastWins = self:GetWins()
+    self.PendingCredz = 0
+    self.PendingWins = 0
     self.GateStartedAt = 0
     self.PendingFinish = false
     self.FinishCrossed = false
@@ -5187,6 +5378,20 @@ function library.AutoFarm:QueueTeleport(reason, expectedPlaceId)
 
     local queueFunction = self:GetQueueFunction()
     local loader = self:GetTeleportLoader()
+
+    if self.QueueJob == game.JobId and self.TransitionToken ~= "" then
+        self.ExpectedPlaceId = expectedPlaceId
+        self.TransitionAt = os.time()
+
+        if not self:Persist() then
+            return false, "Transition state is unavailable"
+        end
+
+        self.QueueStatus = "Armed: " .. tostring(reason)
+        self:UpdateUI()
+        return true
+    end
+
     local transitionToken = table.concat({
         tostring(self.SessionId),
         game.JobId,
@@ -5211,9 +5416,13 @@ function library.AutoFarm:QueueTeleport(reason, expectedPlaceId)
             .. "local p = game:GetService(%q)\n"
             .. "while not p.LocalPlayer do task.wait() end\n"
             .. "local t = game:GetService(%q)\n"
-            .. "if t:GetTeleportSetting(%q) ~= false then\n"
+            .. "local v = nil\n"
+            .. "pcall(function() v = t:GetTeleportSetting(%q) end)\n"
+            .. "if t:GetTeleportSetting(%q) ~= false and tostring(v or '') == %q then\n"
             .. "local e = getgenv and getgenv() or _G\n"
             .. "if e.RunawaysAutoFarmQueueExecution ~= %q then\n"
+            .. "e.RunawaysAutoFarmQueueExecution = %q\n"
+            .. "e.RunawaysAutoFarmQueueLoading = %q\n"
             .. "local s = false\n"
             .. "for i = 1, 3 do\n"
             .. "e.RunawaysAutoFarmTransitionToken = %q\n"
@@ -5224,7 +5433,15 @@ function library.AutoFarm:QueueTeleport(reason, expectedPlaceId)
             .. "if o then s = true break end\n"
             .. "task.wait(i)\n"
             .. "end\n"
-            .. "if s then e.RunawaysAutoFarmQueueExecution = %q end\n"
+            .. "if e.RunawaysAutoFarmQueueLoading == %q then e.RunawaysAutoFarmQueueLoading = nil end\n"
+            .. "if not s and e.RunawaysAutoFarmQueueExecution == %q then\n"
+            .. "e.RunawaysAutoFarmQueueExecution = nil\n"
+            .. "if e.RunawaysScriptLoading == coroutine.running() then\n"
+            .. "e.RunawaysScriptLoading = nil\n"
+            .. "e.RunawaysScriptLoadingAt = nil\n"
+            .. "e.RunawaysScriptLoadingToken = nil\n"
+            .. "end\n"
+            .. "end\n"
             .. "end\n"
             .. "end\n"
             .. "end",
@@ -5232,11 +5449,16 @@ function library.AutoFarm:QueueTeleport(reason, expectedPlaceId)
         self.GamePlaceId,
         "Players",
         "TeleportService",
+        self.TransitionKey,
         self.EnabledKey,
+        transitionToken,
+        transitionToken,
+        transitionToken,
         transitionToken,
         transitionToken,
         snapshot,
         loader,
+        transitionToken,
         transitionToken
     )
     local ok, message = pcall(queueFunction, payload)
@@ -5286,13 +5508,21 @@ function library.AutoFarm:GetOwnedCar()
     return names[1]
 end
 
-function library.AutoFarm:WaitForTeleport(token, duration)
+function library.AutoFarm:WaitForTeleport(token, duration, failureGeneration)
     local expires = os.clock() + duration
-    local failureGeneration = self.TeleportFailureGeneration
+    failureGeneration = tonumber(failureGeneration) or self.TeleportFailureGeneration
+
+    if self.TeleportFailureGeneration ~= failureGeneration then
+        return false, "Teleport failed"
+    end
 
     repeat
+        if self.TeleportFailureGeneration ~= failureGeneration then
+            return false, "Teleport failed"
+        end
+
         if self.Teleporting then
-            return true
+            return true, "Teleport started"
         end
 
         task.wait(0.25)
@@ -5302,7 +5532,206 @@ function library.AutoFarm:WaitForTeleport(token, duration)
         or self.TeleportFailureGeneration ~= failureGeneration
         or os.clock() >= expires
 
-    return self.Teleporting and self.TeleportFailureGeneration == failureGeneration
+    if self.Teleporting and self.TeleportFailureGeneration == failureGeneration then
+        return true, "Teleport started"
+    end
+
+    return false, "Teleport timed out"
+end
+
+
+function library.AutoFarm:DismissTeleportError()
+    local guiService = game:GetService("GuiService")
+
+    pcall(guiService.ClearError, guiService)
+
+    local promptGui = game:GetService("CoreGui"):FindFirstChild("RobloxPromptGui")
+    local overlay = promptGui and promptGui:FindFirstChild("promptOverlay")
+    local errorPrompt = overlay and (overlay:FindFirstChild("ErrorPrompt") or overlay:FindFirstChild("errorPrompt"))
+
+    if not errorPrompt then
+        return
+    end
+
+    local ok, buttons = pcall(errorPrompt.QueryDescendants, errorPrompt, "TextButton")
+
+    if not ok then
+        return
+    end
+
+    for _, button in buttons do
+        local text = tostring(button.Text or ""):lower()
+
+        if text == "ok" or text:find("reconnect", 1, true) then
+            if type(firesignal) == "function" then
+                pcall(firesignal, button.MouseButton1Click)
+            else
+                pcall(button.Activate, button)
+            end
+
+            break
+        end
+    end
+end
+
+
+function library.AutoFarm:StartTeleportRecovery(token)
+    if not self.Running or self.Token ~= token or library.Unloaded then
+        return
+    end
+
+    self.TeleportRecovering = true
+    self.TeleportRecoveryGeneration += 1
+
+    local generation = self.TeleportRecoveryGeneration
+    local attempt = math.max(1, tonumber(self.TeleportRetryCount) or 1)
+    local delays = { 2, 5, 10, 20, 30 }
+    local delay = self.TeleportRetryDelay > 0 and self.TeleportRetryDelay or delays[math.min(attempt, #delays)]
+
+    self.TeleportRetryDelay = 0
+    self:SetPhase("Teleport Recovery", "Rejoining in " .. tostring(delay) .. " seconds | Attempt " .. tostring(attempt))
+    self:Persist()
+
+    task.spawn(function()
+        local expires = os.clock() + delay
+
+        repeat
+            task.wait(0.25)
+        until not self.Running
+            or self.Token ~= token
+            or library.Unloaded
+            or self.TeleportRecoveryGeneration ~= generation
+            or os.clock() >= expires
+
+        if not self.Running
+            or self.Token ~= token
+            or library.Unloaded
+            or self.TeleportRecoveryGeneration ~= generation
+        then
+            return
+        end
+
+        self:DismissTeleportError()
+
+        local target = tonumber(self.TeleportRetryTarget)
+        local retryOptions = self.TeleportRetryOptions
+        local exactRetry = attempt <= 3
+            and (target == self.LobbyPlaceId or target == self.GamePlaceId)
+            and typeof(retryOptions) == "Instance"
+            and retryOptions:IsA("TeleportOptions")
+
+        if not exactRetry then
+            target = self.LobbyPlaceId
+            retryOptions = nil
+        end
+
+        self.QueueJob = nil
+        self.Teleporting = false
+
+        local queued, queueError = self:QueueTeleport("teleport recovery", target)
+
+        if not queued then
+            self.Stats.Retries += 1
+            self.TeleportRetryCount += 1
+            self.LastError = tostring(queueError)
+            self:StartTeleportRecovery(token)
+            return
+        end
+
+        self:SetPhase(
+            exactRetry and "Retrying Teleport" or "Rejoining Lobby",
+            "Recovery attempt " .. tostring(attempt)
+        )
+        self:Persist()
+
+        local sourceJob = game.JobId
+        local failureGeneration = self.TeleportFailureGeneration
+        local called, teleportError = pcall(function()
+            local teleportService = game:GetService("TeleportService")
+
+            if exactRetry then
+                teleportService:TeleportAsync(target, { player }, retryOptions)
+            else
+                teleportService:Teleport(self.LobbyPlaceId, player)
+            end
+        end)
+
+        if not called then
+            self.Teleporting = false
+            self.Stats.Retries += 1
+            self.TeleportRetryCount += 1
+            self.LastError = tostring(teleportError)
+            self:StartTeleportRecovery(token)
+            return
+        end
+
+        local timeout = os.clock() + 30
+
+        repeat
+            task.wait(0.25)
+        until not self.Running
+            or self.Token ~= token
+            or library.Unloaded
+            or self.TeleportRecoveryGeneration ~= generation
+            or self.TeleportFailureGeneration ~= failureGeneration
+            or game.JobId ~= sourceJob
+            or os.clock() >= timeout
+
+        if self.Running
+            and self.Token == token
+            and not library.Unloaded
+            and self.TeleportRecoveryGeneration == generation
+            and self.TeleportFailureGeneration == failureGeneration
+            and game.JobId == sourceJob
+        then
+            self.Teleporting = false
+            self.Stats.Retries += 1
+            self.TeleportRetryCount += 1
+            self.LastError = "Teleport timed out"
+            self:StartTeleportRecovery(token)
+        end
+    end)
+end
+
+
+function library.AutoFarm:HandleTeleportFailure(result, message, targetPlaceId, teleportOptions)
+    if not self.Running or library.Unloaded then
+        return
+    end
+
+    task.defer(self.DismissTeleportError, self)
+
+    if os.clock() - self.LastTeleportFailureAt < 0.75 then
+        return
+    end
+
+    self.LastTeleportFailureAt = os.clock()
+
+    local target = tonumber(targetPlaceId)
+
+    if target ~= self.LobbyPlaceId and target ~= self.GamePlaceId then
+        target = tonumber(self.ExpectedPlaceId)
+    end
+
+    if target ~= self.LobbyPlaceId and target ~= self.GamePlaceId then
+        target = self:GetContext() == "Game" and self.LobbyPlaceId or self.LobbyPlaceId
+    end
+
+    self.TeleportFailureGeneration += 1
+    self.Teleporting = false
+    self.QueueJob = nil
+    self.ReplayRequested = false
+    self.TeleportRetryCount += 1
+    self.TeleportRetryTarget = target
+    self.TeleportRetryOptions = typeof(teleportOptions) == "Instance" and teleportOptions or nil
+    self.TeleportRetryDelay = result == Enum.TeleportResult.Flooded and 15 or 0
+    self.Stats.Retries += 1
+    self.LastError = tostring(message or result or "Teleport failed")
+    self:SetCrossNoclip(false)
+    self:SetPhase("Teleport Failed", self.LastError)
+    self:Persist()
+    self:SendWebhook("Error", self.LastError)
+    self:StartTeleportRecovery(self.Token)
 end
 
 function library.AutoFarm:GetEndScreen()
@@ -5381,20 +5810,95 @@ function library.AutoFarm:GetEndScreen()
     return
 end
 
-function library.AutoFarm:FinalizeRun(outcome, detail)
+function library.AutoFarm:IsVisible(instance)
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local current = instance
+
+    while current and current ~= playerGui do
+        if current:IsA("GuiObject") and not current.Visible then
+            return false
+        end
+
+        if current:IsA("LayerCollector") and not current.Enabled then
+            return false
+        end
+
+        current = current.Parent
+    end
+
+    return current == playerGui
+end
+
+function library.AutoFarm:GetResultCredz(endFrame)
+    local total = endFrame and endFrame:FindFirstChild("Total", true)
+
+    if not total then
+        return
+    end
+
+    for _, name in { "RobloxPlus", "Credz" } do
+        local label = total:FindFirstChild(name, true)
+
+        if label and (label:IsA("TextLabel") or label:IsA("TextButton")) and self:IsVisible(label) then
+            local digits = tostring(label.Text or ""):gsub("[^%d]", "")
+            local value = tonumber(digits)
+
+            if value then
+                return value
+            end
+        end
+    end
+
+    for _, label in total:GetDescendants() do
+        if (label:IsA("TextLabel") or label:IsA("TextButton")) and self:IsVisible(label) then
+            local text = tostring(label.Text or "")
+
+            if text:lower():find("total:", 1, true) then
+                local digits = text:gsub("[^%d]", "")
+                local value = tonumber(digits)
+
+                if value then
+                    return value
+                end
+            end
+        end
+    end
+end
+
+function library.AutoFarm:FinalizeRun(outcome, detail, reward)
+    if self.ResultFinalized then
+        return
+    end
+
     local duration = self.RunStartedAt > 0 and math.max(0, os.time() - self.RunStartedAt) or 0
-    local earned = math.max(0, self:GetCash() - self.RunCashStart)
     local active = self.RunStartedAt > 0
+
+    self:SyncProgress()
+
+    local effectiveCredz = self:GetEffectiveCredz()
+    local effectiveWins = self:GetEffectiveWins()
+    local earned = math.max(0, effectiveCredz - (tonumber(self.RunCashStart) or effectiveCredz))
+    local reported = tonumber(reward)
+
+    if active and reported and reported > earned then
+        local missing = reported - earned
+
+        self.Stats.CashEarned += missing
+        self.PendingCredz += missing
+        effectiveCredz += missing
+        earned = reported
+    end
 
     self:ReleaseSafeZone()
     self.ResultFinalized = true
 
-    if active then
-        self.Stats.CashEarned += earned
-    end
-
     if active and outcome == "Escaped" then
-        self.Stats.Completed += 1
+        if effectiveWins <= (tonumber(self.RunWinsStart) or effectiveWins) then
+            self.Stats.Completed += 1
+            self.PendingWins += 1
+            effectiveWins += 1
+        end
+
         self.Stats.LastRun = duration
         self.Stats.TotalRunTime += duration
 
@@ -5403,13 +5907,15 @@ function library.AutoFarm:FinalizeRun(outcome, detail)
         end
     elseif active then
         self.Stats.Failed += 1
+        self.Stats.LastRun = duration
     end
 
     self.PendingFinish = false
     self.FinishCrossed = false
     self.PendingAt = 0
     self.RunStartedAt = 0
-    self.RunCashStart = self:GetCash()
+    self.RunCashStart = effectiveCredz
+    self.RunWinsStart = effectiveWins
     self.GateStartedAt = 0
     self.GatePassage = nil
     self.GateText = "--"
@@ -5488,18 +5994,38 @@ function library.AutoFarm:HandleEndScreen(token)
             or os.clock() >= outcomeExpires
     end
 
-    outcome = outcome == "Escaped" and "Escaped" or "Captured"
-
-    if self.RunStartedAt > 0 then
-        task.wait(1)
+    if outcome == "Escaped" or outcome == "Ended" and self.FinishCrossed then
+        outcome = "Escaped"
+    else
+        outcome = "Captured"
     end
+
+    local reward
+    local rewardExpires = os.clock() + 3
+
+    repeat
+        reward = self:GetResultCredz(endFrame)
+
+        if reward then
+            break
+        end
+
+        task.wait(0.1)
+    until not self.Running
+        or self.Token ~= token
+        or library.Unloaded
+        or os.clock() >= rewardExpires
 
     if not self.Running or self.Token ~= token or library.Unloaded then
         self.ResultBusy = false
         return true, "Stopped"
     end
 
-    self:FinalizeRun(outcome, outcome == "Escaped" and "Finish confirmed" or "The run ended before the finish")
+    self:FinalizeRun(
+        outcome,
+        outcome == "Escaped" and "Finish confirmed" or "The run ended before the finish",
+        reward
+    )
 
     if not self.Running or self.Token ~= token then
         self.ResultBusy = false
@@ -5565,7 +6091,6 @@ function library.AutoFarm:HandleEndScreen(token)
                         self.LastGameJob = ""
                         self.ReplayRequested = false
                         self.ResultBusy = false
-                        self.QueueJob = nil
                         self.QueueStatus = "Replay started"
                         self:Persist()
                         task.wait(1)
@@ -5603,6 +6128,7 @@ function library.AutoFarm:HandleEndScreen(token)
         self.LastError = tostring(queueError)
     end
 
+    local failureGeneration = self.TeleportFailureGeneration
     local called, lobbyError = pcall(flow.GameManager.BackToLobby)
 
     if not called then
@@ -5612,7 +6138,7 @@ function library.AutoFarm:HandleEndScreen(token)
 
     self:SetPhase("Returning to Lobby", "Replay was unavailable")
 
-    if self:WaitForTeleport(token, 30) then
+    if self:WaitForTeleport(token, 30, failureGeneration) then
         return true, "Teleporting"
     end
 
@@ -5633,9 +6159,15 @@ function library.AutoFarm:RunLobby(token)
     if self.PendingFinish then
         self:SetPhase("Confirming Run", "Waiting for the lobby reward")
 
-        local rewardExpires = os.clock() + 3
+        local rewardExpires = os.clock() + 8
 
         repeat
+            self:SyncProgress()
+
+            if self:GetEffectiveWins() > (tonumber(self.RunWinsStart) or self:GetEffectiveWins()) then
+                break
+            end
+
             task.wait(0.1)
         until not self.Running or self.Token ~= token or os.clock() >= rewardExpires
 
@@ -5748,6 +6280,7 @@ function library.AutoFarm:RunLobby(token)
 
         createFrame.Visible = false
 
+        local failureGeneration = self.TeleportFailureGeneration
         local created, createError = pcall(flow.LobbyServer.create, {
             maxPlayers = 1,
             permissions = "Friends",
@@ -5768,8 +6301,18 @@ function library.AutoFarm:RunLobby(token)
             or self.Token ~= token
             or os.clock() >= joinExpires
 
-        if self.Teleporting or self:WaitForTeleport(token, 20) then
+        local teleportStarted = self.Teleporting
+
+        if not teleportStarted then
+            teleportStarted = self:WaitForTeleport(token, 20, failureGeneration)
+        end
+
+        if teleportStarted then
             return true
+        end
+
+        if self.TeleportRecovering then
+            return false, "Teleport recovery active"
         end
 
         self.Stats.Retries += 1
@@ -5790,6 +6333,7 @@ function library.AutoFarm:RunLobby(token)
         return false, requeueError
     end
 
+    local failureGeneration = self.TeleportFailureGeneration
     local teleported, teleportError = pcall(
         game:GetService("TeleportService").Teleport,
         game:GetService("TeleportService"),
@@ -5801,7 +6345,7 @@ function library.AutoFarm:RunLobby(token)
         return false, tostring(teleportError)
     end
 
-    if self:WaitForTeleport(token, 30) then
+    if self:WaitForTeleport(token, 30, failureGeneration) then
         return true, "Teleporting"
     end
 
@@ -6691,9 +7235,11 @@ function library.AutoFarm:RunGame(token)
 
     if self.LastGameJob ~= game.JobId then
         self:ReleaseSafeZone()
+        self:SyncProgress()
         self.LastGameJob = game.JobId
         self.RunStartedAt = os.time()
-        self.RunCashStart = self:GetCash()
+        self.RunCashStart = self:GetEffectiveCredz()
+        self.RunWinsStart = self:GetEffectiveWins()
         self.GateStartedAt = 0
         self.GatePassage = nil
         self.PendingFinish = false
@@ -6768,6 +7314,7 @@ function library.AutoFarm:RunGame(token)
     end
 
     self.PendingFinish = true
+    self.FinishCrossed = true
     self.PendingAt = os.time()
     self:Persist()
 
@@ -6829,6 +7376,12 @@ function library.AutoFarm:Run(token)
 
     while self.Running and self.Token == token and not library.Unloaded do
         self.RunHeartbeat = os.clock()
+
+        if self.TeleportRecovering then
+            task.wait(0.25)
+            continue
+        end
+
         local executed, ok, message = xpcall(function()
             local context = self:GetContext()
 
@@ -6862,6 +7415,12 @@ function library.AutoFarm:Run(token)
             self.ReplayRequested = false
         end
 
+        if self.TeleportRecovering then
+            failures = 0
+            task.wait(0.25)
+            continue
+        end
+
         if ok and message == "Replay" and not self.Teleporting and self.Running and self.Token == token then
             failures = 0
             task.wait(1)
@@ -6874,10 +7433,7 @@ function library.AutoFarm:Run(token)
         end
 
         failures += 1
-
-        if not self.ResultFinalized then
-            self.Stats.Failed += 1
-        end
+        self.Stats.Retries += 1
 
         self.LastError = tostring(message or "Unknown error")
         self:SetPhase("Retrying", self.LastError)
@@ -6915,6 +7471,13 @@ function library.AutoFarm:Start()
     self.RunActive = false
     self.ActiveRunToken = nil
     self.Teleporting = false
+    self.TeleportRecoveryGeneration += 1
+    self.TeleportRetryCount = 0
+    self.TeleportRetryDelay = 0
+    self.TeleportRetryTarget = 0
+    self.TeleportRetryOptions = nil
+    self.TeleportRecovering = false
+    self.LastTeleportFailureAt = 0
     self.QueueJob = nil
     self.ResultBusy = false
     self.ResultFinalized = false
@@ -6981,7 +7544,7 @@ function library.AutoFarm:Start()
 
             if endFrame
                 and not self.ResultBusy
-                and (not self.RunActive or os.clock() - self.RunHeartbeat >= 1.5)
+                and not self.RunActive
             then
                 self:ReleaseSafeZone()
                 self:SetCrossNoclip(false)
@@ -7014,6 +7577,13 @@ function library.AutoFarm:Stop(silent)
     self.RunActive = false
     self.ActiveRunToken = nil
     self.Teleporting = false
+    self.TeleportRecoveryGeneration += 1
+    self.TeleportRetryCount = 0
+    self.TeleportRetryDelay = 0
+    self.TeleportRetryTarget = 0
+    self.TeleportRetryOptions = nil
+    self.TeleportRecovering = false
+    self.LastTeleportFailureAt = 0
     self.QueueJob = nil
     self.TransitionToken = ""
     self.ExpectedPlaceId = 0
@@ -7028,12 +7598,14 @@ function library.AutoFarm:Stop(silent)
     self.LastGameJob = ""
     self.RunStartedAt = 0
     self.RunCashStart = 0
+    self.RunWinsStart = 0
     self.GateStartedAt = 0
     self.GatePassage = nil
     self.GateText = "--"
     self.QueueStatus = "Disabled"
     self:ReleaseSafeZone()
     self:SetCrossNoclip(false)
+    self:DismissTeleportError()
 
     if not toggles.RunawaysPlayerGodMode or not toggles.RunawaysPlayerGodMode.Value then
         restoreGodMode()
@@ -7058,12 +7630,21 @@ function library.AutoFarm:Destroy(preserve)
     self.Token = nil
     self.RunActive = false
     self.ActiveRunToken = nil
+    self.Teleporting = false
+    self.TeleportRecoveryGeneration += 1
+    self.TeleportRetryCount = 0
+    self.TeleportRetryDelay = 0
+    self.TeleportRetryTarget = 0
+    self.TeleportRetryOptions = nil
+    self.TeleportRecovering = false
+    self.LastTeleportFailureAt = 0
     self.ResultBusy = false
     self.ResultFinalized = false
     self.ReplayRequested = false
     self.WebhookGeneration += 1
     self:ReleaseSafeZone()
     self:SetCrossNoclip(false)
+    self:DismissTeleportError()
 
     if self.TeleportConnection then
         self.TeleportConnection:Disconnect()
@@ -7096,6 +7677,7 @@ function library.AutoFarm:Destroy(preserve)
         self.LastGameJob = ""
         self.RunStartedAt = 0
         self.RunCashStart = 0
+        self.RunWinsStart = 0
         self.GateStartedAt = 0
         self.GatePassage = nil
         self.GateText = "--"
@@ -7327,54 +7909,15 @@ library.AutoFarm.TeleportConnection = player.OnTeleport:Connect(function(state)
     end
 end)
 
-library.AutoFarm.TeleportFailedConnection = game:GetService("TeleportService").TeleportInitFailed:Connect(function(failedPlayer, result, message)
-    if failedPlayer ~= player or not library.AutoFarm.Running then
-        return
-    end
-
-    local token = library.AutoFarm.Token
-    local runWasActive = library.AutoFarm.RunActive
-
-    library.AutoFarm.TeleportFailureGeneration += 1
-    library.AutoFarm.Teleporting = false
-    library.AutoFarm.QueueJob = nil
-    library.AutoFarm.ResultBusy = false
-    library.AutoFarm.ReplayRequested = false
-    library.AutoFarm.Stats.Retries += 1
-    library.AutoFarm.LastError = tostring(message or result)
-    library.AutoFarm:SetCrossNoclip(false)
-    library.AutoFarm:SetPhase("Teleport Failed", library.AutoFarm.LastError)
-
-    if not runWasActive then
-        if not library.AutoFarm.ResultFinalized then
-            library.AutoFarm.Stats.Failed += 1
+library.AutoFarm.TeleportFailedConnection = game:GetService("TeleportService").TeleportInitFailed:Connect(
+    function(failedPlayer, result, message, targetPlaceId, teleportOptions)
+        if failedPlayer ~= player then
+            return
         end
 
-        library.AutoFarm:SendWebhook("Error", library.AutoFarm.LastError)
+        library.AutoFarm:HandleTeleportFailure(result, message, targetPlaceId, teleportOptions)
     end
-
-    library.AutoFarm:Persist()
-
-    task.spawn(function()
-        local expires = os.clock() + 5
-
-        repeat
-            task.wait(0.25)
-        until not library.AutoFarm.Running
-            or library.AutoFarm.Token ~= token
-            or not library.AutoFarm.RunActive
-            or os.clock() >= expires
-
-        if library.AutoFarm.Running
-            and library.AutoFarm.Token == token
-            and not library.AutoFarm.Teleporting
-            and not library.AutoFarm.RunActive
-            and not library.Unloaded
-        then
-            task.spawn(library.AutoFarm.Run, library.AutoFarm, token)
-        end
-    end)
-end)
+)
 
 teleports.LocationBox:AddLabel("Route")
 teleports.LocationBox:AddButton("Teleport to End Gate", function()
@@ -10114,3 +10657,15 @@ if library.AutoFarm.ResumeRequested then
 else
     library.AutoFarm:Persist()
 end
+
+if env.RunawaysScriptLoading == coroutine.running() then
+    if env.RunawaysScriptLoadingToken ~= "" then
+        env.RunawaysScriptLoadedTransition = env.RunawaysScriptLoadingToken
+    end
+
+    env.RunawaysScriptLoading = nil
+    env.RunawaysScriptLoadingAt = nil
+    env.RunawaysScriptLoadingToken = nil
+end
+
+return library
