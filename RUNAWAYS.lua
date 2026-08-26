@@ -4509,6 +4509,7 @@ end
 
 library.AutoFarm = {
     Version = 1,
+    StatsVersion = 2,
     LobbyPlaceId = 118418618261207,
     GamePlaceId = 117311404196294,
     StatePath = "MyScriptHub/RUNAWAYS/auto_farm.json",
@@ -4546,6 +4547,7 @@ library.AutoFarm = {
     LastWins = nil,
     PendingCredz = 0,
     PendingWins = 0,
+    BalanceWarmupUntil = 0,
     GateStartedAt = 0,
     PendingFinish = false,
     FinishCrossed = false,
@@ -4571,6 +4573,9 @@ library.AutoFarm = {
     TeleportRecovering = false,
     LastTeleportFailureAt = 0,
     Labels = {},
+    LabelCache = {},
+    LastUIProgressAt = 0,
+    LastEndScreenScanAt = 0,
     Config = {
         LobbyDelay = 3,
         GateTimeout = 165,
@@ -4623,6 +4628,14 @@ function library.AutoFarm:GetContext()
     end
 
     return "Unsupported"
+end
+
+function library.AutoFarm:IsAutoReplayEnabled()
+    if toggles.RunawaysAutoFarmAutoReplay then
+        return toggles.RunawaysAutoFarmAutoReplay.Value == true
+    end
+
+    return self.Config.AutoReplay == true
 end
 
 function library.AutoFarm:GetQueueFunction()
@@ -4754,11 +4767,12 @@ function library.AutoFarm:SyncProgress(reset)
             local accounted = math.min(gained, math.max(0, tonumber(self.PendingCredz) or 0))
 
             self.PendingCredz = math.max(0, self.PendingCredz - accounted)
-            self.Stats.CashEarned += gained - accounted
+
+            if os.clock() >= (tonumber(self.BalanceWarmupUntil) or 0) then
+                self.Stats.CashEarned += gained - accounted
+            end
+
             self.LastCredzBalance = credz
-        elseif credz < self.LastCredzBalance then
-            self.LastCredzBalance = credz
-            self.PendingCredz = 0
         end
     end
 
@@ -4771,15 +4785,26 @@ function library.AutoFarm:SyncProgress(reset)
             local accounted = math.min(gained, math.max(0, tonumber(self.PendingWins) or 0))
 
             self.PendingWins = math.max(0, self.PendingWins - accounted)
-            self.Stats.Completed += gained - accounted
             self.LastWins = wins
-        elseif wins < self.LastWins then
-            self.LastWins = wins
-            self.PendingWins = 0
         end
     end
 
     return credz, wins
+end
+
+function library.AutoFarm:NormalizeStats()
+    local active = self.RunStartedAt > 0 and 1 or 0
+    local attempts = math.max(active, math.max(0, math.floor(tonumber(self.Stats.Attempts) or 0)))
+    local resolved = math.max(0, attempts - active)
+    local failed = math.min(math.max(0, math.floor(tonumber(self.Stats.Failed) or 0)), resolved)
+    local completed = math.min(
+        math.max(0, math.floor(tonumber(self.Stats.Completed) or 0)),
+        math.max(0, resolved - failed)
+    )
+
+    self.Stats.Attempts = attempts
+    self.Stats.Completed = completed
+    self.Stats.Failed = failed
 end
 
 function library.AutoFarm:FormatDuration(value)
@@ -4798,16 +4823,30 @@ end
 
 function library.AutoFarm:SetLabel(name, text)
     local label = self.Labels[name]
+    text = tostring(text)
+
+    if self.LabelCache[name] == text then
+        return
+    end
 
     if label and type(label.SetText) == "function" then
-        pcall(label.SetText, label, text)
+        local changed = pcall(label.SetText, label, text)
+
+        if changed then
+            self.LabelCache[name] = text
+        end
     end
 end
 
 function library.AutoFarm:UpdateUI()
-    if self.StateReady or self.Running then
+    local nowClock = os.clock()
+
+    if (self.StateReady or self.Running) and nowClock - self.LastUIProgressAt >= 1 then
+        self.LastUIProgressAt = nowClock
         self:SyncProgress()
     end
+
+    self:NormalizeStats()
 
     local now = os.time()
     local elapsed = self.StartedAt > 0 and now - self.StartedAt or 0
@@ -4824,7 +4863,7 @@ function library.AutoFarm:UpdateUI()
     self:SetLabel("Context", "Context: " .. self:GetContext() .. " | Place: " .. tostring(game.PlaceId))
     self:SetLabel("Queue", "Queue: " .. self.QueueStatus .. " | Mode: " .. queueMode)
     self:SetLabel("Session", "Session: " .. self:FormatDuration(elapsed) .. " | Credz: +" .. tostring(math.floor(self.Stats.CashEarned)))
-    self:SetLabel("Runs", string.format("Runs: %d completed / %d attempts | %.1f%%", completed, attempts, successRate))
+    self:SetLabel("Runs", string.format("Runs: %d completed / %d started | %.1f%%", completed, attempts, successRate))
     self:SetLabel("Failures", "Failures: " .. self.Stats.Failed .. " | Retries: " .. self.Stats.Retries .. " | Replay votes: " .. self.Stats.Replays .. " | Teleports: " .. self.Stats.Teleports)
     self:SetLabel("Timing", "Average: " .. self:FormatDuration(average) .. " | Best: " .. self:FormatDuration(self.Stats.BestRun) .. " | Last: " .. self:FormatDuration(self.Stats.LastRun))
     self:SetLabel("Combat", "NPC attack requests: " .. self.Stats.NPCAttacks .. " | Gate activations: " .. self.Stats.GateActivations)
@@ -4834,20 +4873,23 @@ function library.AutoFarm:UpdateUI()
 end
 
 function library.AutoFarm:ResetStats()
-    local runStartedAt = self.Running and self.RunStartedAt or 0
-    local runCashStart = self:GetCash() or 0
-    local runWinsStart = self:GetWins() or 0
-    local gateStartedAt = self.Running and self.GateStartedAt or 0
+    self:SyncProgress()
 
-    self.StartedAt = os.time()
-    self.RunStartedAt = runStartedAt
+    local now = os.time()
+    local active = self.Running and self.RunStartedAt > 0
+    local runCashStart = self:GetEffectiveCredz()
+    local runWinsStart = self:GetEffectiveWins()
+    local gateStartedAt = active and self.GateStartedAt or 0
+
+    self.StartedAt = now
+    self.RunStartedAt = active and now or 0
     self.RunCashStart = runCashStart
     self.RunWinsStart = runWinsStart
     self.GateStartedAt = gateStartedAt
     self.LastError = "None"
     self.GateText = "--"
     self.Stats = {
-        Attempts = 0,
+        Attempts = active and 1 or 0,
         Completed = 0,
         Failed = 0,
         Teleports = 0,
@@ -4873,6 +4915,8 @@ function library.AutoFarm:GetSnapshot()
         self:SyncProgress()
     end
 
+    self:NormalizeStats()
+
     local events = {}
 
     for name, value in self.Webhook.Events do
@@ -4889,6 +4933,7 @@ function library.AutoFarm:GetSnapshot()
 
     return {
         Version = self.Version,
+        StatsVersion = self.StatsVersion,
         Revision = self.Revision,
         UserId = player.UserId,
         Enabled = self.Running,
@@ -5031,12 +5076,46 @@ function library.AutoFarm:ApplySnapshot(snapshot)
     self.PendingAt = tonumber(snapshot.PendingAt) or 0
     self.LastGameJob = tostring(snapshot.LastGameJob or "")
     self.LastError = tostring(snapshot.LastError or "None")
+    self.BalanceWarmupUntil = os.clock() + 10
+
+    local legacyStats = (tonumber(snapshot.StatsVersion) or 1) < self.StatsVersion
 
     if type(snapshot.Stats) == "table" then
         for name, value in self.Stats do
             self.Stats[name] = tonumber(snapshot.Stats[name]) or value
         end
     end
+
+    if legacyStats then
+        local attempts = math.max(0, math.floor(tonumber(self.Stats.Attempts) or 0))
+        local active = self.RunStartedAt > 0 and 1 or 0
+        local resolved = math.max(0, attempts - active)
+        local failed = math.min(math.max(0, math.floor(tonumber(self.Stats.Failed) or 0)), resolved)
+        local currentCredz = self:GetCash()
+        local currentWins = self:GetWins()
+
+        self.Stats.Attempts = attempts
+        self.Stats.Completed = math.max(0, resolved - failed)
+        self.Stats.Failed = failed
+        self.Stats.CashEarned = 0
+        self.PendingCredz = 0
+        self.PendingWins = 0
+
+        if type(currentCredz) == "number"
+            and (type(self.LastCredzBalance) ~= "number" or currentCredz > self.LastCredzBalance)
+        then
+            self.LastCredzBalance = currentCredz
+        end
+
+        if type(currentWins) == "number" and (type(self.LastWins) ~= "number" or currentWins > self.LastWins) then
+            self.LastWins = currentWins
+        end
+
+        self.RunCashStart = tonumber(self.LastCredzBalance) or 0
+        self.RunWinsStart = tonumber(self.LastWins) or 0
+    end
+
+    self:NormalizeStats()
 
     if type(self.LastCredzBalance) ~= "number" then
         self.LastCredzBalance = self:GetCash()
@@ -5046,7 +5125,6 @@ function library.AutoFarm:ApplySnapshot(snapshot)
     if type(self.LastWins) ~= "number" then
         self.LastWins = self:GetWins()
         self.PendingWins = 0
-        self.Stats.Failed = 0
     end
 
     if self.RunCashStart <= 0 and type(self.LastCredzBalance) == "number" then
@@ -5242,7 +5320,7 @@ function library.AutoFarm:BuildWebhook(event, detail)
                     {
                         name = "Runs",
                         value = string.format(
-                            "%d completed / %d attempts | %d replay votes",
+                            "%d completed / %d started | %d replay votes",
                             self.Stats.Completed,
                             self.Stats.Attempts,
                             self.Stats.Replays
@@ -5615,13 +5693,18 @@ function library.AutoFarm:StartTeleportRecovery(token)
 
         local target = tonumber(self.TeleportRetryTarget)
         local retryOptions = self.TeleportRetryOptions
+        local targetValid = target == self.LobbyPlaceId or target == self.GamePlaceId
+
+        if not targetValid then
+            target = self:IsAutoReplayEnabled() and self.GamePlaceId or self.LobbyPlaceId
+        end
+
         local exactRetry = attempt <= 3
-            and (target == self.LobbyPlaceId or target == self.GamePlaceId)
+            and targetValid
             and typeof(retryOptions) == "Instance"
             and retryOptions:IsA("TeleportOptions")
 
         if not exactRetry then
-            target = self.LobbyPlaceId
             retryOptions = nil
         end
 
@@ -5639,7 +5722,7 @@ function library.AutoFarm:StartTeleportRecovery(token)
         end
 
         self:SetPhase(
-            exactRetry and "Retrying Teleport" or "Rejoining Lobby",
+            exactRetry and "Retrying Teleport" or target == self.GamePlaceId and "Rejoining Game" or "Rejoining Lobby",
             "Recovery attempt " .. tostring(attempt)
         )
         self:Persist()
@@ -5652,7 +5735,7 @@ function library.AutoFarm:StartTeleportRecovery(token)
             if exactRetry then
                 teleportService:TeleportAsync(target, { player }, retryOptions)
             else
-                teleportService:Teleport(self.LobbyPlaceId, player)
+                teleportService:Teleport(target, player)
             end
         end)
 
@@ -5714,7 +5797,8 @@ function library.AutoFarm:HandleTeleportFailure(result, message, targetPlaceId, 
     end
 
     if target ~= self.LobbyPlaceId and target ~= self.GamePlaceId then
-        target = self:GetContext() == "Game" and self.LobbyPlaceId or self.LobbyPlaceId
+        target = self:GetContext() == "Game" and self:IsAutoReplayEnabled() and self.GamePlaceId
+            or self.LobbyPlaceId
     end
 
     self.TeleportFailureGeneration += 1
@@ -5772,27 +5856,48 @@ function library.AutoFarm:GetEndScreen()
         end
     end
 
-    local escaped
-    local captured
-    local option
+    if endFrame then
+        if not visible(endFrame) then
+            return
+        end
 
-    if endFrame and visible(endFrame) then
-        escaped = endFrame:FindFirstChild("Escaped", true)
-        captured = endFrame:FindFirstChild("Captured", true)
-        option = endFrame:FindFirstChild("Replay", true) or endFrame:FindFirstChild("Lobby", true)
+        local escaped = endFrame:FindFirstChild("Escaped", true)
+        local captured = endFrame:FindFirstChild("Captured", true)
+        local option = endFrame:FindFirstChild("Replay", true) or endFrame:FindFirstChild("Lobby", true)
+
+        if escaped and visible(escaped) then
+            return endFrame, "Escaped"
+        end
+
+        if captured and visible(captured) then
+            return endFrame, "Captured"
+        end
+
+        if option and visible(option) then
+            return endFrame, "Ended"
+        end
+
+        for _, instance in endFrame:GetDescendants() do
+            if instance:IsA("GuiObject") and visible(instance) then
+                local name = instance.Name:lower()
+                local text = (instance:IsA("TextLabel") or instance:IsA("TextButton")) and instance.Text:lower() or ""
+                local isCaptured = name:find("captured", 1, true) ~= nil or text:find("captured", 1, true) ~= nil
+                local isEscaped = name:find("escaped", 1, true) ~= nil or text:find("escaped", 1, true) ~= nil
+
+                if isCaptured or isEscaped then
+                    return endFrame, isCaptured and "Captured" or "Escaped"
+                end
+            end
+        end
+
+        return
     end
 
-    if escaped and visible(escaped) then
-        return endFrame, "Escaped"
+    if os.clock() - self.LastEndScreenScanAt < 1 then
+        return
     end
 
-    if captured and visible(captured) then
-        return endFrame, "Captured"
-    end
-
-    if option and visible(option) then
-        return endFrame, "Ended"
-    end
+    self.LastEndScreenScanAt = os.clock()
 
     for _, instance in playerGui:GetDescendants() do
         if instance:IsA("GuiObject") and visible(instance) then
@@ -5827,6 +5932,101 @@ function library.AutoFarm:IsVisible(instance)
     end
 
     return current == playerGui
+end
+
+function library.AutoFarm:GetReplayButton(endFrame)
+    if not endFrame then
+        return
+    end
+
+    local function matches(button)
+        if not button:IsA("GuiButton") or not self:IsVisible(button) then
+            return false
+        end
+
+        local name = button.Name:lower()
+        local text = button:IsA("TextButton") and tostring(button.Text or ""):lower() or ""
+
+        if text == "" then
+            local label = button:FindFirstChildWhichIsA("TextLabel", true)
+            text = label and tostring(label.Text or ""):lower() or ""
+        end
+
+        return name:find("replay", 1, true) ~= nil or text:find("replay", 1, true) ~= nil
+    end
+
+    local direct = endFrame:FindFirstChild("Replay", true)
+
+    if direct then
+        if matches(direct) then
+            return direct
+        end
+
+        local nested = direct:FindFirstChildWhichIsA("GuiButton", true)
+
+        if nested and matches(nested) then
+            return nested
+        end
+    end
+
+    for _, button in endFrame:GetDescendants() do
+        if matches(button) then
+            return button
+        end
+    end
+end
+
+function library.AutoFarm:GetReplayVotes(button)
+    if not button then
+        return
+    end
+
+    local text = button:IsA("TextButton") and tostring(button.Text or "") or ""
+
+    if text == "" then
+        local label = button:FindFirstChildWhichIsA("TextLabel", true)
+        text = label and tostring(label.Text or "") or ""
+    end
+
+    local current, required = text:match("(%d+)%s*/%s*(%d+)")
+
+    return tonumber(current), tonumber(required)
+end
+
+function library.AutoFarm:RequestReplay(button)
+    local lastError = "Replay is unavailable"
+
+    if flow.GameManager and type(flow.GameManager.Replay) == "function" then
+        local called, result = pcall(flow.GameManager.Replay)
+
+        if called and result ~= false then
+            return true
+        end
+
+        lastError = tostring(result or "Replay was rejected")
+    end
+
+    if button then
+        if type(firesignal) == "function" then
+            local clicked, clickError = pcall(firesignal, button.MouseButton1Click)
+
+            if clicked then
+                return true
+            end
+
+            lastError = tostring(clickError)
+        else
+            local clicked, clickError = pcall(button.Activate, button)
+
+            if clicked then
+                return true
+            end
+
+            lastError = tostring(clickError)
+        end
+    end
+
+    return false, lastError
 end
 
 function library.AutoFarm:GetResultCredz(endFrame)
@@ -5892,9 +6092,17 @@ function library.AutoFarm:FinalizeRun(outcome, detail, reward)
     self:ReleaseSafeZone()
     self.ResultFinalized = true
 
+    if active then
+        self.Stats.Attempts = math.max(
+            self.Stats.Attempts,
+            self.Stats.Completed + self.Stats.Failed + 1
+        )
+    end
+
     if active and outcome == "Escaped" then
+        self.Stats.Completed += 1
+
         if effectiveWins <= (tonumber(self.RunWinsStart) or effectiveWins) then
-            self.Stats.Completed += 1
             self.PendingWins += 1
             effectiveWins += 1
         end
@@ -5939,7 +6147,7 @@ function library.AutoFarm:FinalizeRun(outcome, detail, reward)
     end
 end
 
-function library.AutoFarm:CompletePending()
+function library.AutoFarm:CompletePending(detail)
     if not self.PendingFinish then
         return
     end
@@ -5958,7 +6166,7 @@ function library.AutoFarm:CompletePending()
         return
     end
 
-    self:FinalizeRun("Escaped", "Returned to lobby")
+    self:FinalizeRun("Escaped", detail or "Transition confirmed")
 end
 
 function library.AutoFarm:HandleEndScreen(token)
@@ -6032,82 +6240,167 @@ function library.AutoFarm:HandleEndScreen(token)
         return true, "Stopped"
     end
 
-    local replayButton = endFrame and endFrame:FindFirstChild("Replay", true)
-    local autoReplay = self.Config.AutoReplay
+    local autoReplay = self:IsAutoReplayEnabled()
 
-    if toggles.RunawaysAutoFarmAutoReplay then
-        autoReplay = toggles.RunawaysAutoFarmAutoReplay.Value == true
-    end
-
-    if autoReplay
-        and replayButton
-        and replayButton.Visible
-        and flow.GameManager
-        and type(flow.GameManager.Replay) == "function"
-    then
-        local queued, queueError = self:QueueTeleport("replay", self.GamePlaceId)
-
-        if not queued then
-            self.LastError = tostring(queueError)
-        end
+    if autoReplay then
+        local replayStartedAt = os.clock()
+        local replayExpires = replayStartedAt + 45
+        local nextRequestAt = replayStartedAt
+        local hiddenAt
+        local queued = false
+        local requests = 0
 
         self.ReplayRequested = true
-        local called, replayError = pcall(flow.GameManager.Replay)
+        self:SetPhase("Auto Replay", "Waiting for the replay control")
 
-        if called and replayError ~= false then
-            self.Stats.Replays += 1
-            self:SetPhase("Auto Replay", "Replay vote submitted")
-            self:Persist()
+        repeat
+            self.RunHeartbeat = os.clock()
 
-            local expires = os.clock() + 45
-            local hiddenAt
+            if self.Teleporting then
+                return true, "Teleporting"
+            end
 
-            repeat
-                self.RunHeartbeat = os.clock()
+            local currentFrame = self:GetEndScreen()
 
-                if self.Teleporting then
-                    return true, "Teleporting"
+            if not currentFrame then
+                hiddenAt = hiddenAt or os.clock()
+
+                local currentMap = workspace:FindFirstChild("Map")
+                local currentCharacter = player.Character
+                local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+                local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+                local currentPrompt = teleports:GetEndPrompt()
+                local reset = currentMap and resultMap and currentMap ~= resultMap
+                    or currentCharacter and resultCharacter and currentCharacter ~= resultCharacter
+                    or currentPrompt and resultPrompt and currentPrompt ~= resultPrompt
+                    or resultPrompt
+                        and currentPrompt == resultPrompt
+                        and not resultPromptEnabled
+                        and currentPrompt.Enabled
+                    or resultPosition
+                        and currentRoot
+                        and (currentRoot.Position - resultPosition).Magnitude >= 250
+
+                if reset
+                    and currentHumanoid
+                    and currentHumanoid.Health > 0
+                    and os.clock() - hiddenAt >= 0.75
+                then
+                    self.LastGameJob = ""
+                    self.ReplayRequested = false
+                    self.ResultBusy = false
+                    self.QueueStatus = "Replay started"
+                    self:Persist()
+                    task.wait(1)
+                    return true, "Replay"
                 end
+            else
+                hiddenAt = nil
+                endFrame = currentFrame
 
-                if not self:GetEndScreen() then
-                    hiddenAt = hiddenAt or os.clock()
-                    local currentMap = workspace:FindFirstChild("Map")
-                    local currentCharacter = player.Character
-                    local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
-                    local currentPrompt = teleports:GetEndPrompt()
-                    local reset = currentMap and currentMap ~= resultMap
-                        or currentCharacter and currentCharacter ~= resultCharacter
-                        or currentPrompt and currentPrompt ~= resultPrompt
-                        or resultPrompt
-                            and not resultPromptEnabled
-                            and currentPrompt
-                            and currentPrompt.Enabled
-                        or resultPosition
-                            and currentRoot
-                            and (currentRoot.Position - resultPosition).Magnitude >= 500
-                        or os.clock() - hiddenAt >= 1.25
+                if os.clock() >= nextRequestAt then
+                    local replayButton = self:GetReplayButton(endFrame)
+                    local currentVotes, requiredVotes = self:GetReplayVotes(replayButton)
+                    local voteComplete = currentVotes
+                        and requiredVotes
+                        and requiredVotes > 0
+                        and currentVotes >= requiredVotes
 
-                    if reset and os.clock() - hiddenAt >= 0.5 then
-                        self.LastGameJob = ""
-                        self.ReplayRequested = false
-                        self.ResultBusy = false
-                        self.QueueStatus = "Replay started"
-                        self:Persist()
-                        task.wait(1)
-                        return true, "Replay"
+                    if voteComplete then
+                        self:SetPhase("Auto Replay", "Replay vote confirmed")
+                        nextRequestAt = os.clock() + 5
+                    elseif replayButton or os.clock() - replayStartedAt >= 8 then
+                        if not queued then
+                            local queueError
+                            queued, queueError = self:QueueTeleport("replay", self.GamePlaceId)
+
+                            if not queued then
+                                self.LastError = tostring(queueError)
+                                self:SetPhase("Auto Replay", "Waiting for the teleport loader")
+                                nextRequestAt = os.clock() + 3
+                            end
+                        end
+
+                        if queued and requests < 10 then
+                            local firstRequest = requests == 0
+
+                            if firstRequest then
+                                self.Stats.Replays += 1
+                                self:SetPhase("Auto Replay", "Submitting replay vote")
+                                self:Persist()
+                            end
+
+                            local requested, replayError = self:RequestReplay(replayButton)
+
+                            if requested then
+                                requests += 1
+                                self:SetPhase("Auto Replay", "Replay vote submitted")
+                            else
+                                if firstRequest then
+                                    self.Stats.Replays = math.max(0, self.Stats.Replays - 1)
+                                    self:Persist()
+                                end
+
+                                self.LastError = tostring(replayError)
+                                self:SetPhase("Auto Replay", self.LastError)
+                            end
+
+                            nextRequestAt = os.clock() + 2
+                        elseif queued then
+                            nextRequestAt = os.clock() + 3
+                        end
+                    else
+                        nextRequestAt = os.clock() + 0.5
                     end
-                else
-                    hiddenAt = nil
                 end
+            end
 
-                task.wait(0.2)
-            until not self.Running
-                or self.Token ~= token
-                or library.Unloaded
-                or os.clock() >= expires
-        else
-            self.LastError = tostring(replayError or "Replay was rejected")
+            task.wait(0.25)
+        until not self.Running
+            or self.Token ~= token
+            or library.Unloaded
+            or os.clock() >= replayExpires
+
+        self.ReplayRequested = false
+
+        if not self.Running or self.Token ~= token or library.Unloaded then
+            self.ResultBusy = false
+            return true, "Stopped"
         end
+
+        local queuedReplay, queueError = self:QueueTeleport("replay recovery", self.GamePlaceId)
+
+        if not queuedReplay then
+            self.ResultBusy = false
+            return false, tostring(queueError)
+        end
+
+        self:SetPhase("Restarting Game", "Replay did not start")
+
+        local failureGeneration = self.TeleportFailureGeneration
+        local called, replayError = pcall(
+            game:GetService("TeleportService").Teleport,
+            game:GetService("TeleportService"),
+            self.GamePlaceId,
+            player
+        )
+
+        if not called then
+            self.ResultBusy = false
+            return false, tostring(replayError)
+        end
+
+        if self:WaitForTeleport(token, 30, failureGeneration) then
+            return true, "Teleporting"
+        end
+
+        if self.TeleportRecovering then
+            return false, "Teleport recovery active"
+        end
+
+        self.ResultBusy = false
+
+        return false, "Game restart did not start"
     end
 
     self.ReplayRequested = false
@@ -6168,14 +6461,14 @@ function library.AutoFarm:RunLobby(token)
                 break
             end
 
-            task.wait(0.1)
+            task.wait(0.5)
         until not self.Running or self.Token ~= token or os.clock() >= rewardExpires
 
         if not self.Running or self.Token ~= token then
             return true
         end
 
-        self:CompletePending()
+        self:CompletePending("Returned to lobby")
     end
 
     self:SetPhase("Lobby", "Waiting before the next game")
@@ -7229,12 +7522,17 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
 end
 
 function library.AutoFarm:RunGame(token)
+    if self.PendingFinish and self.LastGameJob ~= "" and self.LastGameJob ~= game.JobId then
+        self:CompletePending("Replay transition confirmed")
+    end
+
     if self:GetEndScreen() then
         return self:HandleEndScreen(token)
     end
 
     if self.LastGameJob ~= game.JobId then
         self:ReleaseSafeZone()
+        self.BalanceWarmupUntil = os.clock() + 10
         self:SyncProgress()
         self.LastGameJob = game.JobId
         self.RunStartedAt = os.time()
@@ -7318,7 +7616,9 @@ function library.AutoFarm:RunGame(token)
     self.PendingAt = os.time()
     self:Persist()
 
-    local queued, queueError = self:QueueTeleport("lobby", self.LobbyPlaceId)
+    local autoReplay = self:IsAutoReplayEnabled()
+    local nextPlaceId = autoReplay and self.GamePlaceId or self.LobbyPlaceId
+    local queued, queueError = self:QueueTeleport(autoReplay and "replay" or "lobby", nextPlaceId)
 
     if not queued then
         self.PendingFinish = false
@@ -7493,7 +7793,7 @@ function library.AutoFarm:Start()
 
     local context = self:GetContext()
     local targetPlaceId = context == "Lobby" and self.GamePlaceId
-        or context == "Game" and self.LobbyPlaceId
+        or context == "Game" and (self:IsAutoReplayEnabled() and self.GamePlaceId or self.LobbyPlaceId)
     local queueError = self:GetTeleportQueueError(targetPlaceId)
 
     if queueError then
@@ -7522,7 +7822,9 @@ function library.AutoFarm:Start()
         local token = self.Token
 
         while self.Running and self.Token == token and not library.Unloaded do
-            if self:GetContext() == "Game" then
+            local context = self:GetContext()
+
+            if context == "Game" then
                 local humanoid = getHumanoid()
 
                 if humanoid then
@@ -7532,7 +7834,7 @@ function library.AutoFarm:Start()
                 self.Stats.NPCAttacks += killAllNPCs()
             end
 
-            task.wait(0.4)
+            task.wait(context == "Game" and 0.4 or 1)
         end
     end)
 
@@ -7540,22 +7842,23 @@ function library.AutoFarm:Start()
         local token = self.Token
 
         while self.Running and self.Token == token and not library.Unloaded do
-            local endFrame = self:GetEndScreen()
+            local context = self:GetContext()
 
-            if endFrame
-                and not self.ResultBusy
-                and not self.RunActive
-            then
-                self:ReleaseSafeZone()
-                self:SetCrossNoclip(false)
-                self.RunActive = false
-                self.ActiveRunToken = nil
-                self.RunHeartbeat = os.clock()
-                self:SetPhase("Recovering", "Handling the result screen")
-                task.spawn(self.Run, self, token)
+            if context == "Game" and not self.ResultBusy and not self.RunActive then
+                local endFrame = self:GetEndScreen()
+
+                if endFrame then
+                    self:ReleaseSafeZone()
+                    self:SetCrossNoclip(false)
+                    self.RunActive = false
+                    self.ActiveRunToken = nil
+                    self.RunHeartbeat = os.clock()
+                    self:SetPhase("Recovering", "Handling the result screen")
+                    task.spawn(self.Run, self, token)
+                end
             end
 
-            task.wait(0.2)
+            task.wait(context == "Game" and 0.5 or 1)
         end
     end)
 
@@ -7833,7 +8136,7 @@ library.AutoFarm.ControlBox:AddButton("Reset Statistics", function()
 end)
 
 library.AutoFarm.Labels.Session = library.AutoFarm.StatsBox:AddLabel("Session: 00:00:00 | Credz: +0", true)
-library.AutoFarm.Labels.Runs = library.AutoFarm.StatsBox:AddLabel("Runs: 0 completed / 0 attempts | 0.0%", true)
+library.AutoFarm.Labels.Runs = library.AutoFarm.StatsBox:AddLabel("Runs: 0 completed / 0 started | 0.0%", true)
 library.AutoFarm.Labels.Failures = library.AutoFarm.StatsBox:AddLabel("Failures: 0 | Retries: 0 | Replay votes: 0 | Teleports: 0", true)
 library.AutoFarm.Labels.Timing = library.AutoFarm.StatsBox:AddLabel("Average: 00:00:00 | Best: 00:00:00 | Last: 00:00:00", true)
 library.AutoFarm.Labels.Combat = library.AutoFarm.StatsBox:AddLabel("NPC attack requests: 0 | Gate activations: 0", true)
@@ -10613,7 +10916,10 @@ task.spawn(function()
             library.LobbyShop:Refresh()
             library.AutoFarm:UpdateUI()
 
-            if library.AutoFarm.Running and os.clock() - library.AutoFarm.LastPersistAt >= 10 then
+            if library.AutoFarm.Running
+                and library.AutoFarm:GetContext() == "Game"
+                and os.clock() - library.AutoFarm.LastPersistAt >= 10
+            then
                 library.AutoFarm:Persist()
             end
         end
