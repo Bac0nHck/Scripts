@@ -342,10 +342,10 @@ end
 
 local SilentAimRandom = Random.new()
 local LastSilentTargetUpdate = 0
-local FastCastTable
-local FastCastTargetFunction
-local OriginalFastCastFire
-local HookedFastCastFire
+local ProjectileModule
+local CalculateDirectionTarget
+local OriginalCalculateDirection
+local HookedCalculateDirection
 
 local function getSilentTargetPart(player, randomize)
     local character = player and player.Character
@@ -538,7 +538,7 @@ local function updateSilentAimTarget(camera)
     SilentFOVCircle.Color = bestTarget and settings.SilentAimLockedFOVColor or settings.SilentAimFOVColor
 end
 
-local function getSilentAimPoint(origin, velocity, behavior)
+local function getSilentAimPoint(origin, speed, acceleration)
     local settings = Controller.Settings
     local target = Controller.SilentTarget
     local targetKind = Controller.SilentTargetKind
@@ -568,17 +568,10 @@ local function getSilentAimPoint(origin, velocity, behavior)
 
     local aimPoint = part.Position
     if settings.SilentAimPrediction then
-        local speed = 0
-        if typeof(velocity) == "Vector3" then
-            speed = velocity.Magnitude
-        elseif type(velocity) == "number" then
-            speed = math.abs(velocity)
-        end
-
-        if speed > 0 then
-            local travelTime = (aimPoint - origin).Magnitude / speed
+        local projectileSpeed = type(speed) == "number" and math.abs(speed) or 0
+        if projectileSpeed > 0 then
+            local travelTime = (aimPoint - origin).Magnitude / projectileSpeed
             aimPoint = aimPoint + velocityPart.AssemblyLinearVelocity * travelTime
-            local acceleration = behavior and behavior.Acceleration
             if typeof(acceleration) == "Vector3" then
                 aimPoint = aimPoint - acceleration * travelTime * travelTime * 0.5
             end
@@ -607,10 +600,12 @@ local function installSilentAimHook()
         return false
     end
 
-    local success, fastCast = pcall(filtergc, "table", {
-        Keys = { "new", "newBehavior", "Fire", "HighFidelityBehavior" }
+    local success, projectile = pcall(filtergc, "table", {
+        Keys = { "object", "raycast", "calculateDirection", "makeSpread", "init", "providers", "new" }
     }, true)
-    if not success or type(fastCast) ~= "table" or type(fastCast.Fire) ~= "function" then
+    if not success
+        or type(projectile) ~= "table"
+        or type(projectile.calculateDirection) ~= "function" then
         return false
     end
 
@@ -618,47 +613,71 @@ local function installSilentAimHook()
         return false
     end
 
-    FastCastTable = fastCast
-    FastCastTargetFunction = fastCast.Fire
-    local replacement = function(caster, origin, direction, velocity, behavior)
+    ProjectileModule = projectile
+    CalculateDirectionTarget = projectile.calculateDirection
+
+    local calculateDirectionReplacement = function(origin, cameraCFrame, ...)
+        local result = OriginalCalculateDirection(origin, cameraCFrame, ...)
         Controller.FastCastCalls = Controller.FastCastCalls + 1
         local settings = Controller.Settings
         if not Controller.Unloaded
             and settings.SilentAimEnabled
             and typeof(origin) == "Vector3"
-            and typeof(direction) == "Vector3" then
+            and typeof(cameraCFrame) == "CFrame"
+            and type(result) == "table" then
             local camera = Workspace.CurrentCamera
             local localAnchor = getAnchor(LocalPlayer.Character)
             local nearCamera = camera and (origin - camera.CFrame.Position).Magnitude <= 25
             local nearCharacter = localAnchor and (origin - localAnchor.Position).Magnitude <= 30
             if nearCamera or nearCharacter then
-                local aimSuccess, aimPoint = pcall(getSilentAimPoint, origin, velocity, behavior)
+                local speed
+                if typeof(result.castDirection) == "Vector3" then
+                    speed = result.castDirection.Magnitude
+                end
+                if type(speed) ~= "number" or speed <= 0 then
+                    speed = 1000
+                end
+
+                local acceleration = Vector3.new(0, -Workspace.Gravity / 8, 0)
+
+                local aimSuccess, aimPoint = pcall(getSilentAimPoint, origin, speed, acceleration)
                 if aimSuccess and aimPoint then
-                    local difference = aimPoint - origin
-                    if difference.Magnitude > 0 then
-                        direction = difference.Unit
-                        if typeof(velocity) == "Vector3" then
-                            velocity = direction * velocity.Magnitude
-                        end
+                    local muzzleDifference = aimPoint - origin
+                    local cameraDifference = aimPoint - cameraCFrame.Position
+                    if muzzleDifference.Magnitude > 0 and cameraDifference.Magnitude > 0 then
+                        local castMagnitude = typeof(result.castDirection) == "Vector3"
+                            and result.castDirection.Magnitude
+                            or speed
+                        result.position = aimPoint
+                        result.direction = muzzleDifference.Unit
+                        result.rayDirection = cameraDifference.Unit
+                        result.castDirection = result.rayDirection * castMagnitude
                         Controller.SilentRedirects = Controller.SilentRedirects + 1
                         Controller.LastSilentTarget = getSilentTargetLabel()
                     end
                 end
             end
         end
-        return OriginalFastCastFire(caster, origin, direction, velocity, behavior)
+        return result
     end
 
-    HookedFastCastFire = type(newcclosure) == "function" and newcclosure(replacement) or replacement
-    local hookSuccess, original = pcall(hookfunction, FastCastTargetFunction, HookedFastCastFire)
-    if not hookSuccess or type(original) ~= "function" then
-        FastCastTable = nil
-        FastCastTargetFunction = nil
-        HookedFastCastFire = nil
+    HookedCalculateDirection = type(newcclosure) == "function"
+        and newcclosure(calculateDirectionReplacement)
+        or calculateDirectionReplacement
+
+    local directionHookSuccess, originalDirection = pcall(
+        hookfunction,
+        CalculateDirectionTarget,
+        HookedCalculateDirection
+    )
+    if not directionHookSuccess or type(originalDirection) ~= "function" then
+        ProjectileModule = nil
+        CalculateDirectionTarget = nil
+        HookedCalculateDirection = nil
         return false
     end
 
-    OriginalFastCastFire = original
+    OriginalCalculateDirection = originalDirection
     Controller.FastCastHookInstalled = true
     return true
 end
@@ -961,11 +980,11 @@ local function cleanup()
 
     removeDrawing(SilentFOVCircle)
 
-    if FastCastTargetFunction then
+    if CalculateDirectionTarget then
         if type(restorefunction) == "function" then
-            pcall(restorefunction, FastCastTargetFunction)
-        elseif type(hookfunction) == "function" and OriginalFastCastFire then
-            pcall(hookfunction, FastCastTargetFunction, OriginalFastCastFire)
+            pcall(restorefunction, CalculateDirectionTarget)
+        elseif type(hookfunction) == "function" and OriginalCalculateDirection then
+            pcall(hookfunction, CalculateDirectionTarget, OriginalCalculateDirection)
         end
     end
     Controller.FastCastHookInstalled = false
