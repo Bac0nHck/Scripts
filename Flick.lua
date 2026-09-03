@@ -306,6 +306,7 @@ end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local Environment = type(getgenv) == "function" and getgenv() or _G
@@ -330,6 +331,7 @@ end
 local Config = {
     FOVRadius = 150,
     FOVReferenceSize = 720,
+    MobileFOVMultiplier = 1.8,
     MaxDistance = 2500,
     EnemyColor = Color3.fromRGB(255, 90, 90),
 }
@@ -351,8 +353,12 @@ local function isEnemy(player)
 end
 
 local function getRadius(viewport)
-    return math.max(1, math.min(Config.FOVRadius * math.min(viewport.X, viewport.Y)
-        / Config.FOVReferenceSize, math.min(viewport.X, viewport.Y) * 0.48))
+    local shortestSide = math.min(viewport.X, viewport.Y)
+    local radius = Config.FOVRadius * shortestSide / Config.FOVReferenceSize
+    if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+        radius = radius * Config.MobileFOVMultiplier
+    end
+    return math.max(1, math.min(radius, shortestSide * 0.48))
 end
 
 local function isLocalAlive()
