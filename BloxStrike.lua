@@ -173,6 +173,7 @@ local Settings = {
     GrenadeMaxDistance = 1500,
     GrenadeHorizon = 5,
     GrenadeRefresh = 6,
+    GrenadePreviewRefresh = 60,
     GrenadeTrailTime = 4,
     GrenadeThickness = 1,
     GrenadeOpacity = 90,
@@ -2567,6 +2568,7 @@ local function installGrenades()
         for _, entry in pairs(self.Previews) do hide(entry) end
     end
     function Grenades:Refresh()
+        self.NextPreviewUpdate = 0
         table.clear(self.Jobs)
         for _, entries in ipairs({ self.Entries, self.Previews }) do
             for _, entry in pairs(entries) do entry.Job, entry.Forecast, entry.NextPrediction = nil, nil, 0 hide(entry) end
@@ -2617,8 +2619,11 @@ local function installGrenades()
             StartTime = initial.simulationTime, Horizon = Settings.GrenadeHorizon, Steps = 0, Created = now,
             Points = { { Position = initial.position, Time = initial.simulationTime } }, Bounces = {}, LastPointTime = initial.simulationTime,
         }
-        entry.Job, entry.NextPrediction = job, now + 1 / Settings.GrenadeRefresh
-        table.insert(self.Jobs, job)
+        entry.Job = job
+        if not entry.Preview then
+            entry.NextPrediction = now + 1 / Settings.GrenadeRefresh
+            table.insert(self.Jobs, job)
+        end
         return job
     end
     function Grenades:Advance(job)
@@ -2655,9 +2660,9 @@ local function installGrenades()
             local entry = self.Previews[mode]
             if not entry then entry = record("") entry.Preview = mode self.Previews[mode] = entry end
             entry.Active = active and (selected == mode or selected == "Both") or false
-            if not entry.Active then hide(entry) entry.Job, entry.Forecast = nil, nil continue end
-            if entry.Weapon ~= weapon then entry.Weapon, entry.Name, entry.Job, entry.Forecast = weapon, weapon.Name, nil, nil end
-            if entry.Job or now < entry.NextPrediction then continue end
+            if not entry.Active then hide(entry) entry.Job, entry.Forecast, entry.NextPrediction = nil, nil, 0 continue end
+            if entry.Weapon ~= weapon then entry.Weapon, entry.Name, entry.Job, entry.Forecast, entry.NextPrediction = weapon, weapon.Name, nil, nil, 0 end
+            if entry.Job then continue end
             local root = character:FindFirstChild("HumanoidRootPart")
             if not root then continue end
             local config = self.Profiles[weapon.Name] and table.clone(self.Profiles[weapon.Name])
@@ -2684,6 +2689,29 @@ local function installGrenades()
             self:NewJob(entry, initial, config, params, now)
         end
     end
+    function Grenades:UpdatePreview(camera, now)
+        local nextUpdate, interval = self.NextPreviewUpdate or 0, 1 / Settings.GrenadePreviewRefresh
+        if nextUpdate == 0 then nextUpdate = now end
+        if now + 0.0001 < nextUpdate then return end
+        self.NextPreviewUpdate = now + interval - math.max(0, now - nextUpdate) % interval
+        self:PreparePreview(camera, now)
+        local jobs = {}
+        for _, mode in ipairs({ "Far", "Near" }) do
+            local entry = self.Previews[mode]
+            if entry.Active and entry.Job then table.insert(jobs, entry.Job) end
+        end
+        local deadline, steps = os.clock() + 0.0035, 0
+        while #jobs > 0 and steps < 1280 and os.clock() < deadline do
+            local job = table.remove(jobs, 1)
+            local done = false
+            for i = 1, 8 do
+                done = self:Advance(job)
+                steps += 1
+                if done then break end
+            end
+            if not done then table.insert(jobs, job) end
+        end
+    end
     function Grenades:Update(now)
         local camera = workspace.CurrentCamera
         if not self.Ready or not State.Running or not camera then return end
@@ -2693,7 +2721,6 @@ local function installGrenades()
             if entry.Ended and now - entry.Ended > Settings.GrenadeTrailTime then self:Remove(entry) self.Entries[model] = nil end
         end
         if not Settings.GrenadeEnabled or (Settings.HideWithMenu and Library.Toggled) then self:HideAll() return end
-        self:PreparePreview(camera, now)
         if Settings.GrenadePrediction then
             for _, entry in pairs(self.Entries) do
                 if not entry.Ended and not entry.Job and now >= entry.NextPrediction and Settings[kinds[entry.Name][1]]
@@ -2784,6 +2811,7 @@ local function installGrenades()
     end
     function Grenades:Render(camera, now)
         if not self.Ready or not Settings.GrenadeEnabled or (Settings.HideWithMenu and Library.Toggled) then self:HideAll() return end
+        self:UpdatePreview(camera, now)
         for _, entry in pairs(self.Entries) do self:Draw(entry, camera, now) end
         for _, entry in pairs(self.Previews) do self:Draw(entry, camera, now) end
     end
@@ -2997,10 +3025,6 @@ local function render(now)
             Library.Toggles.SilentEnabled:SetValue(false)
             report("Silent aim paused: " .. tostring(aimError))
         end
-    end
-    if Grenades.Ready then
-        local success, err = pcall(function() Grenades:Render(camera, now) end)
-        if not success then Grenades.LastError = tostring(err) Grenades:HideAll() end
     end
     if not Settings.Enabled or (Settings.HideWithMenu and Library.Toggled) then hideAll() return end
     local own = LocalPlayer.Character
@@ -3244,6 +3268,7 @@ local function start()
     local grenadeTiming = group(grenadeTab, "Prediction and trails", 1)
     slider(grenadeTiming, "GrenadeMaxDistance", "Maximum distance", 50, 5000, 0, " studs")
     slider(grenadeTiming, "GrenadeHorizon", "Prediction length", 1, 10, 1, " s")
+    slider(grenadeTiming, "GrenadePreviewRefresh", "Held preview refresh", 15, 144, 0, " Hz")
     slider(grenadeTiming, "GrenadeRefresh", "Prediction refresh", 2, 15, 0, " Hz")
     slider(grenadeTiming, "GrenadeTrailTime", "Trail duration", 0.5, 10, 1, " s")
     local grenadeStyle = group(grenadeTab, "Appearance", 2)
@@ -3972,6 +3997,10 @@ local function start()
         if not State.Running then return end
         elapsed = elapsed + delta
         local camera = workspace.CurrentCamera
+        if camera and Grenades.Ready then
+            local success, err = pcall(function() Grenades:Render(camera, os.clock()) end)
+            if not success then Grenades.LastError = tostring(err) Grenades:HideAll() end
+        end
         local interval = 1 / Settings.RefreshRate
         local changedCamera = camera and (camera.CFrame ~= State.LastCamera or camera.FieldOfView ~= State.LastFOV)
         if elapsed + 0.0001 < interval and not changedCamera and LocalPlayer:GetAttribute("IsSpectating") ~= true then return end
