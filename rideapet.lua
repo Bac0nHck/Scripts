@@ -1,6 +1,5 @@
 local Env = getgenv and getgenv() or _G
 if game.PlaceId ~= 124216119978534 then error("Ride A Pet: this game is not supported.") end
-if Env.RideAPetIris and Env.RideAPetIris.Unload then Env.RideAPetIris:Unload() end
 if Env.RideAPetCompact and Env.RideAPetCompact.Unload then Env.RideAPetCompact:Unload() end
 local A = {
     Alive = true, Epoch = 0, Connections = {}, Threads = {}, Markers = {}, Cooldowns = {},
