@@ -16,6 +16,7 @@ end
 if Bridge.Runtime then
     Bridge.Runtime:Destroy()
 end
+Bridge.Magnetism = Bridge.Magnetism or setmetatable({}, { __mode = "k" })
 
 local Runtime = {
     Active = true,
@@ -25,6 +26,8 @@ local Runtime = {
     Target = nil,
     HookCount = 0,
     LastError = nil,
+    ThrowContexts = setmetatable({}, { __mode = "k" }),
+    PredictionCount = 0,
 }
 Bridge.Runtime = Runtime
 Environment.MurderDuels = Runtime
@@ -36,6 +39,7 @@ local AimNames = {
     getAimPoint = "World",
     getAdjustedScreenPoint = "Screen",
     getSecuredScreenPoint = "Screen",
+    doThrow = "Throw",
 }
 
 local function connect(signal, callback)
@@ -175,6 +179,183 @@ local function visible(character, point, camera)
     return not hit or hit.Instance:IsDescendantOf(character)
 end
 
+local MotionParams = RaycastParams.new()
+MotionParams.FilterType = Enum.RaycastFilterType.Exclude
+MotionParams.IgnoreWater = true
+
+local function limitVector(vector, maximum)
+    local magnitude = vector.Magnitude
+    return magnitude > maximum and vector * (maximum / magnitude) or vector
+end
+
+local function sampleMotion()
+    local now = os.clock()
+    for player, record in pairs(Runtime.Records) do
+        local character, humanoid, root = getEnemy(player)
+        if character then
+            local position = root.Position
+            local velocity = root.AssemblyLinearVelocity
+            local previous = record.Motion
+            local acceleration = Vector3.zero
+            if previous and previous.Root == root then
+                local dt = now - previous.Time
+                local displacement = position - previous.Position
+                if dt >= 1 / 120 and dt <= 0.2 and displacement.Magnitude <= math.max(12, velocity.Magnitude * dt * 3) then
+                    local observed = displacement / dt
+                    if (observed - velocity).Magnitude < math.max(8, velocity.Magnitude * 0.5) then
+                        velocity = velocity:Lerp(observed, 0.15)
+                    end
+                    if root.AssemblyLinearVelocity.Magnitude < 0.5 then
+                        velocity = root.AssemblyLinearVelocity
+                    else
+                        local change = (velocity - previous.Velocity) / dt
+                        change = limitVector(Vector3.new(change.X, 0, change.Z), 40)
+                        acceleration = previous.Acceleration:Lerp(change, 1 - math.exp(-dt * 12))
+                    end
+                end
+            end
+            record.Motion = {
+                Root = root,
+                Position = position,
+                Velocity = velocity,
+                Acceleration = acceleration,
+                Time = now,
+                Grounded = humanoid.FloorMaterial ~= Enum.Material.Air,
+            }
+        else
+            record.Motion = nil
+        end
+    end
+end
+
+local function flightAtRange(flight, origin, aim, goal, power, explosive)
+    local offset = goal - origin
+    local distance = offset.Magnitude
+    if distance < 0.01 then
+        return origin, 0
+    end
+    local axis = offset / distance
+    local state = flight.newState(origin, aim, power, explosive)
+    local step = flight.FIXED_DT
+    local previous = origin
+    local previousProgress = 0
+    for index = 1, math.ceil(3 / step) do
+        flight.advance(state, step)
+        local progress = (state.position - origin):Dot(axis)
+        if progress >= distance then
+            local alpha = math.clamp((distance - previousProgress) / math.max(progress - previousProgress, 0.00001), 0, 1)
+            return previous:Lerp(state.position, alpha), (index - 1 + alpha) * step
+        end
+        if index > 6 and state.velocity:Dot(axis) <= 0 then
+            return
+        end
+        previous = state.position
+        previousProgress = progress
+    end
+end
+
+local function solveIntercept(flight, origin, power, explosive, targetAt)
+    local speed = flight.PARAMS.THROW_SPEED * flight.computePowerScalar(power, explosive)
+    local time = math.clamp((targetAt(0) - origin).Magnitude / math.max(speed, 1), 0, 3)
+    local aim = targetAt(time)
+    local residual = math.huge
+    for _ = 1, 9 do
+        local position, nextTime = flightAtRange(flight, origin, aim, targetAt(time), power, explosive)
+        if not position then
+            return
+        end
+        local correction = targetAt(nextTime) - position
+        residual = correction.Magnitude
+        aim = aim + correction
+        local converged = residual < 0.07 and math.abs(nextTime - time) < 0.001
+        time = nextTime
+        if converged then
+            break
+        end
+    end
+    if residual > 0.75 then
+        return
+    end
+    return aim, time, residual
+end
+
+function Runtime:PredictKnife(player, context)
+    local flight = self.KnifeFlight
+    local character, humanoid, root, head = getEnemy(player)
+    if not flight or not character then
+        return
+    end
+    local record = self.Records[player]
+    local motion = record and record.Motion
+    local fresh = motion and motion.Root == root and os.clock() - motion.Time < 0.2
+    local velocity = fresh and motion.Velocity or root.AssemblyLinearVelocity
+    local acceleration = fresh and motion.Acceleration or Vector3.zero
+    local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
+    local rootPosition = root.Position
+    local headOffset = head.Position - rootPosition
+    local clearance = root.Size.Y * 0.5 + (humanoid.RigType == Enum.HumanoidRigType.R6 and 2 or humanoid.HipHeight)
+    local ignored = { character }
+    for _, object in ipairs({ Workspace:FindFirstChild("Characters"), Workspace:FindFirstChild("Bin"), Workspace.CurrentCamera }) do
+        if object then
+            ignored[#ignored + 1] = object
+        end
+    end
+    if LocalPlayer.Character then
+        ignored[#ignored + 1] = LocalPlayer.Character
+    end
+    MotionParams.FilterDescendantsInstances = ignored
+    local floor = Workspace:Raycast(rootPosition, Vector3.new(0, -clearance - 0.4, 0), MotionParams)
+    grounded = (grounded or floor ~= nil) and math.abs(velocity.Y) < 3
+    local pingOK, ping = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
+    local latency = pingOK and math.clamp(ping * 0.5, 0, 0.15) or 0
+    local function targetAt(time)
+        local duration = time + latency
+        local horizontal = Vector3.new(velocity.X, 0, velocity.Z) * duration
+        horizontal = horizontal + acceleration * (0.12 * (duration - 0.12 * (1 - math.exp(-duration / 0.12))))
+        if horizontal.Magnitude > 0.01 then
+            local wall = Workspace:Raycast(rootPosition, horizontal, MotionParams)
+            if wall then
+                horizontal = horizontal.Unit * math.max(0, wall.Distance - root.Size.X * 0.5)
+            end
+        end
+        local vertical = grounded and 0 or velocity.Y * duration - 0.5 * Workspace.Gravity * duration * duration
+        local future = rootPosition + horizontal + Vector3.new(0, vertical, 0)
+        local height = math.max(rootPosition.Y, future.Y) + 3
+        local ground = Workspace:Raycast(
+            Vector3.new(future.X, height, future.Z),
+            Vector3.new(0, -math.max(12, height - future.Y + clearance + 3), 0),
+            MotionParams
+        )
+        if ground then
+            local standingHeight = ground.Position.Y + clearance
+            if grounded and math.abs(standingHeight - rootPosition.Y) <= 4 then
+                future = Vector3.new(future.X, standingHeight, future.Z)
+            elseif not grounded then
+                future = Vector3.new(future.X, math.max(future.Y, standingHeight), future.Z)
+            end
+        end
+        return future + headOffset
+    end
+    local point, time, residual = solveIntercept(flight, context.Origin, context.Power, context.Explosive, targetAt)
+    if point then
+        self.PredictionCount = self.PredictionCount + 1
+        self.LastPrediction = {
+            Target = player.Name,
+            Point = point,
+            Origin = context.Origin,
+            Expected = targetAt(time),
+            FlightTime = time,
+            Power = context.Power,
+            Explosive = context.Explosive,
+            Residual = residual,
+            Velocity = velocity,
+            Latency = latency,
+            CreatedAt = os.clock(),
+        }
+    end
+    return point
+end
+
 function Runtime:GetTargetPoint()
     if not self.Active or LocalPlayer:GetAttribute("Alive") == false then
         return
@@ -204,6 +385,10 @@ function Runtime:GetTargetPoint()
         end
     end
     self.Target = bestPlayer
+    local context = self.ThrowContexts[coroutine.running()]
+    if bestPlayer and context and os.clock() - context.CreatedAt < 0.25 then
+        return self:PredictKnife(bestPlayer, context) or bestPoint
+    end
     return bestPoint
 end
 
@@ -230,6 +415,7 @@ function Runtime:Destroy()
     end
     table.clear(self.Records)
     table.clear(self.Connections)
+    table.clear(self.ThrowContexts)
     self.Target = nil
     if Bridge.Runtime == self then
         Bridge.Runtime = nil
@@ -295,7 +481,7 @@ local function installHook(callback, mode)
         return
     end
     local source = debug.info(callback, "s")
-    if mode == "World" then
+    if mode == "World" or mode == "Throw" then
         if not source:find("Players." .. LocalPlayer.Name .. ".", 1, true)
             or not (source:find("KnifeClient", 1, true) or source:find("RevolverClient", 1, true)) then
             return
@@ -304,6 +490,66 @@ local function installHook(callback, mode)
         return
     end
     local original
+    if mode == "Throw" then
+        if not source:find("KnifeClient", 1, true) then
+            return
+        end
+        local magnetism, getEffects
+        for _, value in pairs(debug.getupvalues(callback)) do
+            if type(value) == "table" and type(value.getAdjustedScreenPoint) == "function" then
+                magnetism = value
+            elseif type(value) == "function" and debug.info(value, "n") == "getEffects" then
+                getEffects = value
+            end
+        end
+        if magnetism and not Bridge.Magnetism[magnetism] then
+            local adjusted = magnetism.getAdjustedScreenPoint
+            magnetism.getAdjustedScreenPoint = function(self, ...)
+                local current = Bridge.Runtime
+                local context = current and current.Active and current.ThrowContexts[coroutine.running()]
+                if context and os.clock() - context.CreatedAt < 0.25 then
+                    return nil
+                end
+                return adjusted(self, ...)
+            end
+            Bridge.Magnetism[magnetism] = true
+        end
+        local function throw(power, ...)
+            local current = Bridge.Runtime
+            local character = LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            if not current or not current.Active or not current.KnifeFlight or not root or type(power) ~= "number" then
+                return original(power, ...)
+            end
+            local arm = character:FindFirstChild("Right Arm") or character:FindFirstChild("RightHand")
+            local origin = arm and arm.Position or root.Position + root.CFrame.LookVector * 2
+            local explosive = false
+            if getEffects then
+                local success, effects = pcall(getEffects)
+                explosive = success and type(effects) == "table" and (tonumber(effects.Explosive) or 0) > 0
+            end
+            local thread = coroutine.running()
+            local previous = current.ThrowContexts[thread]
+            local context = { Origin = origin, Power = math.clamp(power, 0, 1), Explosive = explosive, CreatedAt = os.clock() }
+            current.ThrowContexts[thread] = context
+            task.defer(function()
+                if current.ThrowContexts[thread] == context then
+                    current.ThrowContexts[thread] = previous
+                end
+            end)
+            local results = table.pack(pcall(original, power, ...))
+            current.ThrowContexts[thread] = previous
+            if not results[1] then
+                error(results[2], 0)
+            end
+            return table.unpack(results, 2, results.n)
+        end
+        original = hookfunction(callback, type(newcclosure) == "function" and newcclosure(throw) or throw)
+        Bridge.Installed[callback] = true
+        Bridge.Installed[original] = true
+        Runtime.HookCount = Runtime.HookCount + 1
+        return
+    end
     local replacement = function(...)
         local current = Bridge.Runtime
         if current and current.Active then
@@ -330,6 +576,16 @@ local function installHook(callback, mode)
 end
 
 local function installHooks()
+    if not Runtime.KnifeFlight then
+        local shared = game:GetService("ReplicatedStorage"):FindFirstChild("Shared")
+        local module = shared and shared:FindFirstChild("KnifeFlight")
+        if module then
+            local success, flight = pcall(require, module)
+            if success and type(flight) == "table" and type(flight.newState) == "function" and type(flight.advance) == "function" then
+                Runtime.KnifeFlight = flight
+            end
+        end
+    end
     if type(filtergc) == "function" then
         for name, mode in pairs(AimNames) do
             for _, callback in ipairs(filtergc("function", { Name = name, IgnoreExecutor = true }, false)) do
@@ -355,6 +611,14 @@ local ok, failure = pcall(function()
     connect(Players.PlayerAdded, addPlayer)
     connect(Players.PlayerRemoving, removePlayer)
     installHooks()
+    local motionElapsed = 0
+    connect(RunService.Heartbeat, function(dt)
+        motionElapsed = motionElapsed + dt
+        if motionElapsed >= 1 / 30 then
+            motionElapsed = 0
+            sampleMotion()
+        end
+    end)
     connect(RunService.RenderStepped, function()
         local success, message = pcall(render)
         if not success and Runtime.LastError ~= tostring(message) then
