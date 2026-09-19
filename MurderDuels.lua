@@ -1,8 +1,22 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
 local Environment = getgenv()
+local Startup = {}
+Environment.__MurderDuelsStartup = Startup
+
+while not game:IsLoaded() or not Players.LocalPlayer do
+    task.wait(0.1)
+    if Environment.__MurderDuelsStartup ~= Startup then
+        return
+    end
+end
+
+if Environment.__MurderDuelsStartup ~= Startup then
+    return
+end
+
+local LocalPlayer = Players.LocalPlayer
 
 assert(Drawing and type(Drawing.new) == "function", "Drawing library is required")
 assert(type(hookfunction) == "function", "hookfunction is required")
@@ -366,6 +380,8 @@ function Runtime:GetTargetPoint()
     if not camera or not ownHumanoid or ownHumanoid.Health <= 0 then
         return
     end
+    local context = self.ThrowContexts[coroutine.running()]
+    local knifeThrow = context and os.clock() - context.CreatedAt < 0.25
     local center, radius = getFOV(camera)
     local bestDistance = radius
     local bestPoint, bestPlayer
@@ -376,7 +392,7 @@ function Runtime:GetTargetPoint()
             local projected, onScreen = camera:WorldToViewportPoint(head.Position)
             if onScreen and projected.Z > 0 then
                 local distance = (Vector2.new(projected.X, projected.Y) - center).Magnitude
-                if distance <= bestDistance and visible(character, head.Position, camera) then
+                if distance <= bestDistance and (knifeThrow or visible(character, head.Position, camera)) then
                     bestDistance = distance
                     bestPoint = head.Position
                     bestPlayer = player
@@ -385,8 +401,7 @@ function Runtime:GetTargetPoint()
         end
     end
     self.Target = bestPlayer
-    local context = self.ThrowContexts[coroutine.running()]
-    if bestPlayer and context and os.clock() - context.CreatedAt < 0.25 then
+    if bestPlayer and knifeThrow then
         return self:PredictKnife(bestPlayer, context) or bestPoint
     end
     return bestPoint
@@ -605,12 +620,11 @@ local function installHooks()
 end
 
 local ok, failure = pcall(function()
+    connect(Players.PlayerAdded, addPlayer)
+    connect(Players.PlayerRemoving, removePlayer)
     for _, player in ipairs(Players:GetPlayers()) do
         addPlayer(player)
     end
-    connect(Players.PlayerAdded, addPlayer)
-    connect(Players.PlayerRemoving, removePlayer)
-    installHooks()
     local motionElapsed = 0
     connect(RunService.Heartbeat, function(dt)
         motionElapsed = motionElapsed + dt
@@ -635,14 +649,12 @@ end
 
 task.spawn(function()
     while Runtime.Active do
-        task.wait(2)
-        if Runtime.Active then
-            local success, message = pcall(installHooks)
-            if not success and Runtime.LastError ~= tostring(message) then
-                Runtime.LastError = tostring(message)
-                warn("Murder Duels Silent Aim: " .. Runtime.LastError)
-            end
+        local success, message = pcall(installHooks)
+        if not success and Runtime.LastError ~= tostring(message) then
+            Runtime.LastError = tostring(message)
+            warn("Murder Duels Silent Aim: " .. Runtime.LastError)
         end
+        task.wait(2)
     end
 end)
 
