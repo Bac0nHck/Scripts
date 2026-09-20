@@ -565,16 +565,6 @@ local function installKnifeDispatch()
     Runtime.KnifeDispatchReady = true
 end
 
-local FOV = draw("Circle", {
-    Color = White,
-    Thickness = 1,
-    NumSides = 96,
-    Filled = false,
-    Transparency = 0.75,
-    Radius = 180,
-})
-Runtime.FOV = FOV
-
 function Runtime:Destroy()
     if not self.Active then
         return
@@ -605,16 +595,11 @@ end
 local function render()
     local camera = Workspace.CurrentCamera
     if not camera then
-        FOV.Visible = false
         for _, record in pairs(Runtime.Records) do
             hide(record)
         end
         return
     end
-    local center, radius = getFOV(camera)
-    FOV.Position = center
-    FOV.Radius = radius
-    FOV.Visible = true
     local ownCharacter = LocalPlayer.Character
     local ownRoot = ownCharacter and ownCharacter:FindFirstChild("HumanoidRootPart")
     local origin = ownRoot and ownRoot.Position or camera.CFrame.Position
