@@ -246,7 +246,8 @@ local function createReporter(context)
                     { name = "Collected this session", value = tostring(state.TotalCollected), inline = true },
                     { name = "Ocean Coin balance", value = tostring(state.Balance), inline = true },
                     { name = "Completed runs", value = tostring(state.CompletedRuns), inline = true },
-                    { name = "Session time", value = string.format("%02d:%02d:%02d", hours, minutes, seconds), inline = true }
+                    { name = "Session time", value = string.format("%02d:%02d:%02d", hours, minutes, seconds), inline = true },
+                    { name = "Account", value = "||`" .. context.Player.Name .. "`||", inline = true }
                 },
                 footer = { text = os.date("%H:%M:%S") }
             }}
@@ -390,6 +391,7 @@ environment.OceanCoinFarm = state
 local performance = createPerformanceController({ State = state })
 local reporter = createReporter({
     State = state,
+    Player = player,
     GetOptions = getOptions,
     Request = function()
         return request or http_request or (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
