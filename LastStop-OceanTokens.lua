@@ -246,10 +246,9 @@ local function createReporter(context)
                     { name = "Collected this session", value = tostring(state.TotalCollected), inline = true },
                     { name = "Ocean Coin balance", value = tostring(state.Balance), inline = true },
                     { name = "Completed runs", value = tostring(state.CompletedRuns), inline = true },
-                    { name = "Session time", value = string.format("%02d:%02d:%02d", hours, minutes, seconds), inline = true },
-                    { name = "Coins per minute", value = string.format("%.1f", state.TotalCollected * 60 / elapsed), inline = true }
+                    { name = "Session time", value = string.format("%02d:%02d:%02d", hours, minutes, seconds), inline = true }
                 },
-                footer = { text = "Ocean Coin Farm" }
+                footer = { text = os.date("%H:%M:%S") }
             }}
         }
         local encoded, body = pcall(function()
@@ -847,4 +846,3 @@ task.spawn(function()
         warn("Ocean Coin Farm: " .. err)
     end
 end)
-
