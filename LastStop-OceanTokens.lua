@@ -17,7 +17,7 @@ getgenv().OceanCoinFarmResume = {
 }
 ]], string.format("%q", options.webhook), tostring(options.performance),
         tostring(statistics.TotalCollected), tostring(statistics.CompletedRuns), tostring(statistics.StartedAt)) .. [[
--- loadstring(game:HttpGet(""))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/LastStop-OceanTokens.lua"))()
 ]]
     return pcall(function()
         queue_on_teleport(continuation)
