@@ -4,6 +4,7 @@ getgenv().settings = getgenv().settings or {
     performance = true,
 }
 --]]
+
 local function createSessionStore(context)
     local key = "OceanCoinFarmSession_" .. tostring(context.Player.UserId)
     local function normalizeOptions(options)
@@ -360,7 +361,134 @@ local function createReporter(context)
     return { Send = send }
 end
 
-local version = "2026.09.23.7-autoexecute"
+local function createLobbyReturn(context)
+    local state = context.State
+    local player = context.Player
+    local target = context.PlaceId
+    local active = false
+    local failed = false
+    local progressAt
+    local pending = {}
+
+    local function recordFailure(message)
+        failed = true
+        progressAt = nil
+        state.TeleportStatus = "Failed"
+        state.LastTeleportError = tostring(message)
+        state.LastError = "Return to lobby: " .. tostring(message)
+    end
+
+    table.insert(context.Connections, player.OnTeleport:Connect(function(teleportState, placeId)
+        if not active or not state.Running or (placeId and placeId ~= target) then
+            return
+        end
+        if teleportState == Enum.TeleportState.Failed then
+            recordFailure(state.LastTeleportError or "Roblox reported a failed teleport.")
+        else
+            if state.TeleportStatus ~= teleportState.Name then
+                progressAt = os.clock()
+            end
+            state.TeleportStatus = teleportState.Name
+            failed = false
+        end
+    end))
+
+    table.insert(context.Connections, context.TeleportService.TeleportInitFailed:Connect(function(failedPlayer, result, message, placeId)
+        if active and state.Running and failedPlayer == player and placeId == target then
+            recordFailure(tostring(result) .. ": " .. tostring(message))
+        end
+    end))
+
+    local function attempt(method, callback)
+        while state.Running and progressAt and not failed do
+            if os.clock() - progressAt >= 60 then
+                recordFailure("The teleport did not finish after 60 seconds.")
+                break
+            end
+            if not context.Pause(0.2) then
+                return
+            end
+        end
+        local previous = pending[method]
+        if not state.Running or (previous and not previous.Done) then
+            return
+        end
+        context.SaveSession()
+        state.TeleportAttempts = (state.TeleportAttempts or 0) + 1
+        state.TeleportMethod = method
+        state.TeleportStatus = "Requested"
+        state.Status = "Returning to lobby"
+        failed = false
+        progressAt = nil
+        local started = os.clock()
+        local requestState = { Done = false }
+        pending[method] = requestState
+        task.spawn(function()
+            requestState.Ok, requestState.Result = pcall(callback)
+            requestState.Done = true
+        end)
+        while state.Running do
+            if failed then
+                return
+            end
+            if progressAt then
+                if os.clock() - progressAt >= 60 then
+                    recordFailure("The teleport did not finish after 60 seconds.")
+                    return
+                end
+            elseif requestState.Done and (not requestState.Ok or requestState.Result == false) then
+                recordFailure(requestState.Ok and "The server rejected the lobby request." or requestState.Result)
+                return
+            elseif os.clock() - started >= 18 then
+                recordFailure(requestState.Done and "The lobby request did not start a teleport." or "The lobby request timed out.")
+                return
+            end
+            if not context.Pause(0.2) then
+                return
+            end
+        end
+    end
+
+    local function run()
+        if active or not state.Running then
+            return
+        end
+        active = true
+        local cycles = 0
+        while state.Running do
+            cycles = cycles + 1
+            attempt("GameService.ReturnLobby", function()
+                local remote = context.GetReturnRemote()
+                if not remote or not remote:IsA("RemoteFunction") then
+                    error("The game's ReturnLobby remote is unavailable.")
+                end
+                return remote:InvokeServer()
+            end)
+            if not state.Running then
+                break
+            end
+            state.Status = "Retrying return to lobby"
+            if not context.Pause(math.min(5 * cycles, 30)) then
+                break
+            end
+            attempt("TeleportService.Teleport", function()
+                context.TeleportService:Teleport(target, player)
+            end)
+            if not state.Running then
+                break
+            end
+            state.Status = "Retrying return to lobby"
+            if not context.Pause(math.min(10 * cycles, 30)) then
+                break
+            end
+        end
+        active = false
+    end
+
+    return { Run = run }
+end
+
+local version = "2026.09.23.8-autoexecute"
 local settings = {
     AutoRestart = true,
     TravelHeight = 100,
@@ -545,6 +673,26 @@ table.insert(connections, player.Idled:Connect(function()
     end
 end))
 
+local lobbyReturn = createLobbyReturn({
+    State = state,
+    Player = player,
+    PlaceId = settings.LobbyPlaceId,
+    TeleportService = TeleportService,
+    Connections = connections,
+    SaveSession = saveSession,
+    Pause = pause,
+    GetReturnRemote = function()
+        local current = ReplicatedStorage
+        for _, name in ipairs({ "ClientSource", "Mutual", "Packages", "Knit", "Services", "GameService", "RF", "ReturnLobby" }) do
+            current = current:FindFirstChild(name)
+            if not current then
+                return nil
+            end
+        end
+        return current
+    end
+})
+
 local function returnToLobby()
     releasePhysics(true)
     if not state.Running then
@@ -558,23 +706,7 @@ local function returnToLobby()
         end
         return
     end
-    saveSession()
-    state.Status = "Returning to lobby"
-    for attempt = 1, 3 do
-        if not state.Running then
-            return
-        end
-        local ok, err = pcall(function()
-            TeleportService:Teleport(settings.LobbyPlaceId, player)
-        end)
-        if not ok then
-            state.LastError = tostring(err)
-        end
-        if not pause(18) then
-            return
-        end
-    end
-    error("Could not return to the lobby.")
+    lobbyReturn.Run()
 end
 
 local function runMatch(source)
