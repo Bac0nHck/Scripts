@@ -1,8 +1,9 @@
+--[[
 getgenv().settings = {
     webhook = "",
     performance = true,
 }
-
+]]
 local function queueFarmTeleport(options, statistics)
     local queue_on_teleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
     if type(queue_on_teleport) ~= "function" then
