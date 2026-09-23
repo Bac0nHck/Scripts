@@ -1,28 +1,64 @@
 --[[
-getgenv().settings = {
+getgenv().settings = getgenv().settings or {
     webhook = "",
     performance = true,
 }
-]]
-local function queueFarmTeleport(options, statistics)
-    local queue_on_teleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
-    if type(queue_on_teleport) ~= "function" then
-        return false, "Automatic restart requires queue_on_teleport support."
+--]]
+local function createSessionStore(context)
+    local key = "OceanCoinFarmSession_" .. tostring(context.Player.UserId)
+    local function normalizeOptions(options)
+        options = type(options) == "table" and options or {}
+        return {
+            webhook = type(options.webhook) == "string" and options.webhook or "",
+            performance = options.performance ~= false
+        }
     end
-    local continuation = string.format([[
-getgenv().OceanCoinFarmResume = {
-    Settings = { webhook = %s, performance = %s },
-    TotalCollected = %s,
-    CompletedRuns = %s,
-    StartedAt = %s,
-}
-]], string.format("%q", options.webhook), tostring(options.performance),
-        tostring(statistics.TotalCollected), tostring(statistics.CompletedRuns), tostring(statistics.StartedAt)) .. [[
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Bac0nHck/Scripts/refs/heads/main/LastStop-OceanTokens.lua"))()
-]]
-    return pcall(function()
-        queue_on_teleport(continuation)
-    end)
+    local function read()
+        local ok, saved = pcall(function()
+            return context.TeleportService:GetTeleportSetting(key)
+        end)
+        if not ok or type(saved) ~= "table" then
+            saved = context.Environment.OceanCoinFarmSession
+        end
+        if type(saved) ~= "table" or saved.Schema ~= 1 or saved.UserId ~= context.Player.UserId then
+            return nil
+        end
+        for _, name in ipairs({ "TotalCollected", "CompletedRuns", "StartedAt" }) do
+            local value = saved[name]
+            if type(value) ~= "number" or value ~= value or value < 0 or value == math.huge then
+                return nil
+            end
+        end
+        return {
+            TotalCollected = saved.TotalCollected,
+            CompletedRuns = saved.CompletedRuns,
+            StartedAt = saved.StartedAt,
+            Settings = normalizeOptions(saved.Settings),
+            ConfiguredSettings = normalizeOptions(saved.ConfiguredSettings)
+        }
+    end
+    local function save(state, options, configured)
+        local record = {
+            Schema = 1,
+            UserId = context.Player.UserId,
+            TotalCollected = state.TotalCollected,
+            CompletedRuns = state.CompletedRuns,
+            StartedAt = state.StartedAt,
+            Settings = normalizeOptions(options),
+            ConfiguredSettings = normalizeOptions(configured)
+        }
+        context.Environment.OceanCoinFarmSession = record
+        return pcall(function()
+            context.TeleportService:SetTeleportSetting(key, record)
+        end)
+    end
+    local function clear()
+        context.Environment.OceanCoinFarmSession = nil
+        pcall(function()
+            context.TeleportService:SetTeleportSetting(key, false)
+        end)
+    end
+    return { Read = read, Save = save, Clear = clear }
 end
 
 local function createPerformanceController(context)
@@ -324,7 +360,7 @@ local function createReporter(context)
     return { Send = send }
 end
 
-local version = "2026.09.23.6"
+local version = "2026.09.23.7-autoexecute"
 local settings = {
     AutoRestart = true,
     TravelHeight = 100,
@@ -340,14 +376,6 @@ local settings = {
 }
 
 local environment = getgenv and getgenv() or _G
-local carried = environment.OceanCoinFarmResume
-environment.OceanCoinFarmResume = nil
-if type(carried) ~= "table" then
-    carried = nil
-end
-if carried and type(carried.Settings) == "table" then
-    environment.settings = carried.Settings
-end
 if type(environment.settings) ~= "table" then
     environment.settings = { webhook = "", performance = true }
 end
@@ -358,12 +386,11 @@ local function getOptions()
         performance = options.performance ~= false
     }
 end
-local previous = environment.OceanCoinFarm
-if previous and previous.Running then
-    if carried and previous.Version == version then
-        return
-    end
-    previous.Stop()
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+if game.PlaceId ~= settings.GamePlaceId and game.PlaceId ~= settings.LobbyPlaceId then
+    return
 end
 
 local Players = game:GetService("Players")
@@ -375,8 +402,27 @@ while not player do
     task.wait(0.1)
     player = Players.LocalPlayer
 end
+local previous = environment.OceanCoinFarm
+if previous and previous.Running then
+    if previous.Version == version and previous.JobId == game.JobId then
+        return
+    end
+    previous.Stop()
+end
+local sessionStore = createSessionStore({
+    Environment = environment,
+    Player = player,
+    TeleportService = TeleportService
+})
+local carried = sessionStore.Read()
+local configuredOptions = getOptions()
+if carried and carried.ConfiguredSettings.webhook == configuredOptions.webhook
+    and carried.ConfiguredSettings.performance == configuredOptions.performance then
+    environment.settings = carried.Settings
+end
 local state = {
     Version = version,
+    JobId = game.JobId,
     Running = true,
     Status = "Loading",
     Collected = 0,
@@ -388,6 +434,9 @@ local state = {
     LastError = nil
 }
 environment.OceanCoinFarm = state
+local function saveSession()
+    state.SessionSaved = sessionStore.Save(state, getOptions(), configuredOptions)
+end
 local performance = createPerformanceController({ State = state })
 local reporter = createReporter({
     State = state,
@@ -438,6 +487,7 @@ function state.Stop()
     state.Status = "Stopped"
     releasePhysics(true)
     performance.Restore()
+    sessionStore.Clear()
     for _, connection in ipairs(connections) do
         connection:Disconnect()
     end
@@ -480,19 +530,11 @@ local function waitUntil(callback, timeout)
     return nil
 end
 
-local function queueContinuation()
-    if state.TeleportQueued then
-        return true
+table.insert(connections, player.OnTeleport:Connect(function()
+    if state.Running then
+        saveSession()
     end
-    local ok, err = queueFarmTeleport(getOptions(), state)
-    if not ok then
-        state.LastError = tostring(err)
-        return false
-    end
-    state.TeleportQueued = true
-    return true
-end
-
+end))
 table.insert(connections, player.Idled:Connect(function()
     if state.Running then
         pcall(function()
@@ -508,7 +550,7 @@ local function returnToLobby()
     if not state.Running then
         return
     end
-    if not settings.AutoRestart or not queueContinuation() then
+    if not settings.AutoRestart then
         state.Stop()
         state.Status = "Complete"
         if state.LastError then
@@ -516,6 +558,7 @@ local function returnToLobby()
         end
         return
     end
+    saveSession()
     state.Status = "Returning to lobby"
     for attempt = 1, 3 do
         if not state.Running then
@@ -715,15 +758,14 @@ local function runMatch(source)
 end
 
 local function runLobby(source)
-    if not queueContinuation() then
-        error(state.LastError)
-    end
+    saveSession()
     local controller = require(source.Lobby.Controllers.LobbyController)
     local remotes = source.Mutual.Packages.Knit.Services.LobbyService.RF
     local function ownsLobby(data)
         return data and (data.Owner == player or data.Owner == player.Name or data.Owner == player.UserId)
     end
     local function startLobby()
+        saveSession()
         local createWindow = player.PlayerGui:FindFirstChild("CreateLobby")
         if createWindow then
             createWindow:Destroy()
@@ -848,3 +890,4 @@ task.spawn(function()
         warn("Ocean Coin Farm: " .. err)
     end
 end)
+
