@@ -77,6 +77,17 @@ end
 
 local dataModule = ReplicatedStorage:WaitForChild("Data")
 local flow = require(ReplicatedStorage:WaitForChild("FlowClient"))
+
+do
+    local expires = os.clock() + 30
+
+    while not (flow.GameManager or flow.Loot or flow.NPCs or flow.LobbyServer or flow.PlayerDataServer)
+        and os.clock() < expires
+    do
+        task.wait(0.1)
+    end
+end
+
 local data = require(dataModule)
 local packages = require(ReplicatedStorage:WaitForChild("Packages"))
 local luck = packages.Utility.Luck
@@ -258,8 +269,41 @@ local function getPickupCFrame(root, part)
 
     direction = direction.Magnitude > 0.1 and direction.Unit or Vector3.new(0, 0, 1)
 
-    local position = part.Position + direction * 3 + Vector3.new(0, 2.5, 0)
-    return CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z))
+    local excludes = { part:FindFirstAncestorWhichIsA("Model") or part }
+    local pickupRayParams = RaycastParams.new()
+    local pickupOverlapParams = OverlapParams.new()
+
+    if root.Parent then
+        excludes[#excludes + 1] = root.Parent
+    end
+
+    pickupRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    pickupRayParams.RespectCanCollide = true
+    pickupRayParams.FilterDescendantsInstances = excludes
+    pickupOverlapParams.FilterType = Enum.RaycastFilterType.Exclude
+    pickupOverlapParams.RespectCanCollide = true
+    pickupOverlapParams.FilterDescendantsInstances = excludes
+
+    local fallback
+    local visible
+
+    for step = 0, 7 do
+        local side = CFrame.fromAxisAngle(Vector3.yAxis, step * math.pi / 4):VectorToWorldSpace(direction)
+        local position = part.Position + side * 3 + Vector3.new(0, 2.5, 0)
+        local cframe = CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z))
+
+        fallback = fallback or cframe
+
+        if not workspace:Raycast(position, part.Position - position, pickupRayParams) then
+            if #workspace:GetPartBoundsInBox(cframe, Vector3.new(1.5, 2, 1.5), pickupOverlapParams) == 0 then
+                return cframe
+            end
+
+            visible = visible or cframe
+        end
+    end
+
+    return visible or fallback
 end
 
 local function killAllNPCs(radius)
@@ -1349,7 +1393,7 @@ function teleports:ToObjective()
     local destination = player:GetAttribute("Pointy")
 
     if typeof(destination) ~= "CFrame" then
-        notify("Objective position is unavailable.")
+        notify("Place a ping with Q first.")
         return
     end
 
@@ -1613,6 +1657,13 @@ function teleports:StartRefuel(token, vehicle, refuelSystem, gun, collider)
     local ownedDrag = dragged ~= gun
 
     if ownedDrag then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+        if humanoid and character:FindFirstChildOfClass("Tool") then
+            humanoid:UnequipTools()
+            task.wait(0.1)
+        end
+
         local pickup
         local searchOk, candidates = pcall(filtergc, "function", { Name = "pickup" }, false)
 
@@ -2475,24 +2526,6 @@ local function getWeaponSource(target)
     end
 end
 
-local function functionList(value)
-    if type(value) == "function" then
-        return { value }
-    end
-
-    local list = {}
-
-    if type(value) == "table" then
-        for _, entry in value do
-            if type(entry) == "function" then
-                list[#list + 1] = entry
-            end
-        end
-    end
-
-    return list
-end
-
 local function findGCFunctions(name, upvalues)
     if type(filtergc) ~= "function" then
         return {}
@@ -2503,7 +2536,25 @@ local function findGCFunctions(name, upvalues)
         Upvalues = upvalues,
     }, false)
 
-    return success and functionList(result) or {}
+    if not success then
+        return {}
+    end
+
+    if type(result) == "function" then
+        return { result }
+    end
+
+    local list = {}
+
+    if type(result) == "table" then
+        for _, entry in result do
+            if type(entry) == "function" then
+                list[#list + 1] = entry
+            end
+        end
+    end
+
+    return list
 end
 
 local function getUpvalues(target)
@@ -2514,6 +2565,30 @@ local function getUpvalues(target)
     local success, values = pcall(debug.getupvalues, target)
 
     return success and values or {}
+end
+
+local upvalueSearch = {}
+
+function upvalueSearch.Has(values, target)
+    for _, value in values do
+        if value == target then
+            return true
+        end
+    end
+
+    return false
+end
+
+function upvalueSearch.Number(values, candidates)
+    for index, value in values do
+        if type(value) == "number" then
+            for _, candidate in candidates do
+                if value == candidate then
+                    return index
+                end
+            end
+        end
+    end
 end
 
 local function discoverWeaponRuntime(tool, config, configState)
@@ -2530,47 +2605,97 @@ local function discoverWeaponRuntime(tool, config, configState)
     local fireSeen = {}
     local shootSeen = {}
 
+    local function getRuntimeEntry(target, skip)
+        local entry = {
+            Function = target,
+            Rpm = {},
+            Mode = {},
+        }
+
+        for index, value in getUpvalues(target) do
+            if skip and skip[index] then
+                continue
+            end
+
+            if configState.HasMaxRpm
+                and type(value) == "number"
+                and (value == configState.MaxRpm or value == config.maxRpm)
+            then
+                entry.Rpm[#entry.Rpm + 1] = index
+            elseif configState.HasMode
+                and type(value) == "string"
+                and (value == configState.Mode or value == config.mode)
+            then
+                entry.Mode[#entry.Mode + 1] = index
+            end
+        end
+
+        return entry
+    end
+
+    local ammo = tonumber(tool:GetAttribute("Ammo"))
+
     for _, fire in findGCFunctions("fire", { tool }) do
         local source = getWeaponSource(fire)
 
         if source and not fireSeen[fire] then
             fireSeen[fire] = true
 
-            local ammoIndex = source == "Flamethrower" and 9 or 1
-            local success, ammo = pcall(debug.getupvalue, fire, ammoIndex)
+            local shoots = findGCFunctions("shoot", { fire })
+            local candidates = {}
+            local ammoIndex
 
-            if success and type(ammo) == "number" then
+            if ammo then
+                for index, value in getUpvalues(fire) do
+                    if type(value) == "number" and value == ammo then
+                        candidates[#candidates + 1] = index
+                    end
+                end
+            end
+
+            ammoIndex = candidates[1]
+
+            if #candidates > 1 then
+                local marker = -987654.321
+
+                for _, index in candidates do
+                    local shared = false
+
+                    pcall(debug.setupvalue, fire, index, marker)
+
+                    for _, shoot in shoots do
+                        if upvalueSearch.Has(getUpvalues(shoot), marker) then
+                            shared = true
+                            break
+                        end
+                    end
+
+                    pcall(debug.setupvalue, fire, index, ammo)
+
+                    if shared then
+                        ammoIndex = index
+                        break
+                    end
+                end
+            end
+
+            if ammoIndex then
                 runtime.Fires[#runtime.Fires + 1] = {
                     Function = fire,
                     Index = ammoIndex,
                 }
             end
 
-            for _, shoot in findGCFunctions("shoot", { fire }) do
+            local fireEntry = getRuntimeEntry(fire, ammoIndex and { [ammoIndex] = true })
+
+            if #fireEntry.Rpm > 0 or #fireEntry.Mode > 0 then
+                runtime.Shoots[#runtime.Shoots + 1] = fireEntry
+            end
+
+            for _, shoot in shoots do
                 if getWeaponSource(shoot) and not shootSeen[shoot] then
                     shootSeen[shoot] = true
-
-                    local entry = {
-                        Function = shoot,
-                        Rpm = {},
-                        Mode = {},
-                    }
-
-                    for index, value in getUpvalues(shoot) do
-                        if configState.HasMaxRpm
-                            and type(value) == "number"
-                            and (value == configState.MaxRpm or value == config.maxRpm)
-                        then
-                            entry.Rpm[#entry.Rpm + 1] = index
-                        elseif configState.HasMode
-                            and type(value) == "string"
-                            and (value == configState.Mode or value == config.mode)
-                        then
-                            entry.Mode[#entry.Mode + 1] = index
-                        end
-                    end
-
-                    runtime.Shoots[#runtime.Shoots + 1] = entry
+                    runtime.Shoots[#runtime.Shoots + 1] = getRuntimeEntry(shoot)
                 end
             end
         end
@@ -2587,7 +2712,7 @@ local function setRuntimeUpvalue(target, index, value)
     pcall(debug.setupvalue, target, index, value)
 end
 
-function punchMods:FindFunction(force)
+function punchMods:FindFunction(force, speed)
     local character = player.Character
 
     if self.Character ~= character then
@@ -2607,12 +2732,14 @@ function punchMods:FindFunction(force)
 
     self.LastSearch = os.clock()
 
-    for _, target in findGCFunctions("doPunch") do
+    for _, target in findGCFunctions("doPunch", { character }) do
         local values = getUpvalues(target)
+        local speedIndex = upvalueSearch.Has(values, self.Config)
+            and upvalueSearch.Number(values, { self.Defaults.Speed, self.Config.hitsPerSecond, speed })
 
-        if values[2] == character and values[16] == self.Config and type(values[19]) == "number" then
+        if speedIndex then
             self.Function = target
-            self.SpeedIndex = 19
+            self.SpeedIndex = speedIndex
 
             return target
         end
@@ -2634,7 +2761,7 @@ function punchMods:GetConfigState(config)
     return state
 end
 
-function punchMods:FindMeleeFunction(force)
+function punchMods:FindMeleeFunction(force, speed)
     local character = player.Character
     local tool = character and character:FindFirstChildOfClass("Tool")
 
@@ -2672,17 +2799,19 @@ function punchMods:FindMeleeFunction(force)
     end
 
     self.MeleeConfig = config
-    self:GetConfigState(config)
+    local state = self:GetConfigState(config)
 
     for _, target in findGCFunctions("doSwing", { tool }) do
         local values = getUpvalues(target)
+        local speedIndex = upvalueSearch.Has(values, config)
+            and upvalueSearch.Number(values, { state.Speed, config.hitsPerSecond, speed })
 
-        if values[7] == tool and values[12] == config and type(values[15]) == "number" then
+        if speedIndex then
             self.MeleeFunction = target
-            self.MeleeSpeedIndex = 15
+            self.MeleeSpeedIndex = speedIndex
             self.MeleeRuntimes[target] = {
                 Config = config,
-                Index = 15,
+                Index = speedIndex,
             }
 
             return target
@@ -2710,7 +2839,7 @@ function punchMods:Apply(force)
         config.destructibleDamage = enabled and objectDamage or state.ObjectDamage
     end
 
-    local target = self:FindFunction(force)
+    local target = self:FindFunction(force, speed)
 
     if target and self.SpeedIndex and type(debug.getupvalue) == "function" then
         local success, current = pcall(debug.getupvalue, target, self.SpeedIndex)
@@ -2720,7 +2849,7 @@ function punchMods:Apply(force)
         end
     end
 
-    local meleeTarget = self:FindMeleeFunction(force)
+    local meleeTarget = self:FindMeleeFunction(force, speed)
 
     if meleeTarget and self.MeleeSpeedIndex and self.MeleeConfig and type(debug.getupvalue) == "function" then
         local state = self:GetConfigState(self.MeleeConfig)
@@ -4195,20 +4324,26 @@ function remoteShop:Buy()
             root.AssemblyAngularVelocity = Vector3.zero
             task.wait(0.35)
 
-            if self.Token ~= token or library.Unloaded or not entry.Prompt.Parent then
-                return
+            for _ = 1, 3 do
+                if self.Token ~= token or library.Unloaded or not entry.Prompt.Parent then
+                    return
+                end
+
+                fireproximityprompt(entry.Prompt)
+
+                local expires = os.clock() + 1.5
+
+                repeat
+                    task.wait(0.05)
+                until self.Token ~= token
+                    or library.Unloaded
+                    or self:DidPurchase(entry, beforeCash, beforeCount)
+                    or os.clock() >= expires
+
+                if self:DidPurchase(entry, beforeCash, beforeCount) then
+                    break
+                end
             end
-
-            fireproximityprompt(entry.Prompt, entry.Prompt.HoldDuration, true)
-
-            local expires = os.clock() + 1.5
-
-            repeat
-                task.wait(0.05)
-            until self.Token ~= token
-                or library.Unloaded
-                or self:DidPurchase(entry, beforeCash, beforeCount)
-                or os.clock() >= expires
         end)
 
         self:Restore(context)
@@ -4322,6 +4457,18 @@ function library.LobbyShop:GetCatalog(category)
     return data.WeaponData and data.WeaponData.Weapons
 end
 
+function library.LobbyShop:GetCategories()
+    local categories = {}
+
+    for _, category in { "Classes", "Weapons", "Vehicles" } do
+        if type(self:GetCatalog(category)) == "table" then
+            categories[#categories + 1] = category
+        end
+    end
+
+    return categories
+end
+
 function library.LobbyShop:Refresh(force)
     if not self:IsLobby() or not self.Box then
         return
@@ -4337,7 +4484,7 @@ function library.LobbyShop:Refresh(force)
     local category = categoryOption.Value
 
     if category ~= "Classes" and category ~= "Weapons" and category ~= "Vehicles" then
-        category = "Classes"
+        category = "Weapons"
     end
 
     local catalog = self:GetCatalog(category)
@@ -5981,16 +6128,21 @@ function library.AutoFarm:GetReplayVotes(button)
         return
     end
 
-    local text = button:IsA("TextButton") and tostring(button.Text or "") or ""
+    local labels = { button }
 
-    if text == "" then
-        local label = button:FindFirstChildWhichIsA("TextLabel", true)
-        text = label and tostring(label.Text or "") or ""
+    for _, label in button:GetDescendants() do
+        labels[#labels + 1] = label
     end
 
-    local current, required = text:match("(%d+)%s*/%s*(%d+)")
+    for _, label in labels do
+        if (label:IsA("TextLabel") or label:IsA("TextButton")) and self:IsVisible(label) then
+            local current, required = tostring(label.Text or ""):match("(%d+)%s*/%s*(%d+)")
 
-    return tonumber(current), tonumber(required)
+            if current then
+                return tonumber(current), tonumber(required)
+            end
+        end
+    end
 end
 
 function library.AutoFarm:RequestReplay(button)
@@ -6030,7 +6182,33 @@ function library.AutoFarm:RequestReplay(button)
 end
 
 function library.AutoFarm:GetResultCredz(endFrame)
-    local total = endFrame and endFrame:FindFirstChild("Total", true)
+    if not endFrame then
+        return
+    end
+
+    local plus = endFrame:FindFirstChild("RobloxPlus", true)
+
+    if plus and (plus:IsA("TextLabel") or plus:IsA("TextButton")) and self:IsVisible(plus) then
+        local digits = tostring(plus.Text or ""):match("=%s*([%d,]+)")
+        local value = digits and tonumber((digits:gsub(",", "")))
+
+        if value then
+            return value
+        end
+    end
+
+    local totalLabel = endFrame:FindFirstChild("TotalCredz", true)
+
+    if totalLabel and (totalLabel:IsA("TextLabel") or totalLabel:IsA("TextButton")) and self:IsVisible(totalLabel) then
+        local digits = tostring(totalLabel.Text or ""):match("([%d,]+)")
+        local value = digits and tonumber((digits:gsub(",", "")))
+
+        if value then
+            return value
+        end
+    end
+
+    local total = endFrame:FindFirstChild("Total", true)
 
     if not total then
         return
@@ -8229,7 +8407,7 @@ end)
 teleports.LocationBox:AddButton("Teleport to Start", function()
     teleports:ToStart()
 end)
-teleports.LocationBox:AddButton("Teleport to Objective", function()
+teleports.LocationBox:AddButton("Teleport to Ping (Q)", function()
     teleports:ToObjective()
 end)
 teleports.LocationBox:AddDivider()
@@ -8349,7 +8527,7 @@ end)
 if library.LobbyShop.Box then
     library.LobbyShop.Box:AddLabel("Credz purchases only")
     library.LobbyShop.Box:AddDropdown("RunawaysLobbyShopCategory", {
-        Values = { "Classes", "Weapons", "Vehicles" },
+        Values = library.LobbyShop:GetCategories(),
         Default = 1,
         Multi = false,
         Text = "Category",
@@ -8757,13 +8935,15 @@ function bringItems:Start(all)
                     repeat
                         RunService.Heartbeat:Wait()
                         ready = part.Parent == item and not part.Anchored
-
-                        if ready and type(isnetworkowner) == "function" then
-                            local ownerOk, owns = pcall(isnetworkowner, part)
-
-                            ready = ownerOk and owns
-                        end
                     until ready or self.Token ~= token or library.Unloaded or os.clock() >= expires
+
+                    if ready then
+                        for _ = 1, 3 do
+                            RunService.Heartbeat:Wait()
+                        end
+
+                        ready = part.Parent == item and not part.Anchored
+                    end
                 end
 
                 if self.Token ~= token or library.Unloaded or self.Context ~= context then
@@ -9553,8 +9733,8 @@ local function sellAllLoot()
                 error("Pawn shop is not available.", 0)
             end
 
-            if prompt.Enabled then
-                error("Pawn counter is occupied.", 0)
+            local function sellReady()
+                return prompt.Enabled and prompt.ActionText:find("%$%s*[%d,]+") ~= nil
             end
 
             local tools = {}
@@ -9596,7 +9776,12 @@ local function sellAllLoot()
             character:PivotTo(CFrame.lookAt(position, Vector3.new(volume.Position.X, position.Y, volume.Position.Z)))
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.25)
+
+            if camera then
+                camera.CFrame = CFrame.lookAt(position + Vector3.yAxis * 1.5, volume.Position)
+            end
+
+            task.wait(0.5)
 
             local cashBefore = getCashAmount()
             local index = 1
@@ -9643,9 +9828,9 @@ local function sellAllLoot()
 
                     repeat
                         task.wait(0.05)
-                    until prompt.Enabled or os.clock() >= deadline
+                    until sellReady() or os.clock() >= deadline
 
-                    if not prompt.Enabled then
+                    if not sellReady() then
                         failed += deposited
                         break
                     end
@@ -9669,7 +9854,7 @@ local function sellAllLoot()
                         repeat
                             task.wait(0.03)
                             currentCash = getCashAmount()
-                        until prompt.Enabled
+                        until sellReady()
                             or batchCash and currentCash and currentCash - batchCash >= batchValue
                             or os.clock() >= deadline
 
@@ -9678,7 +9863,7 @@ local function sellAllLoot()
                             break
                         end
 
-                        if not prompt.Enabled then
+                        if not sellReady() then
                             break
                         end
 
@@ -9694,15 +9879,26 @@ local function sellAllLoot()
 
                         local confirmed = false
 
-                        deadline = os.clock() + 1.5
+                        deadline = os.clock() + 8
 
                         repeat
                             task.wait(0.05)
                             currentCash = getCashAmount()
-                            confirmed = not prompt.Enabled or clickCash and currentCash and currentCash > clickCash
+                            confirmed = not sellReady() or clickCash and currentCash and currentCash > clickCash
                         until confirmed or os.clock() >= deadline
 
                         if not confirmed then
+                            break
+                        end
+
+                        deadline = os.clock() + 3
+
+                        repeat
+                            task.wait(0.05)
+                        until not sellReady() or os.clock() >= deadline
+
+                        if not sellReady() then
+                            soldInBatch = deposited
                             break
                         end
 
@@ -9726,6 +9922,15 @@ local function sellAllLoot()
             end
 
             local cashAfter = getCashAmount()
+
+            if sold > 0 and cashBefore and cashAfter and cashAfter <= cashBefore then
+                local deadline = os.clock() + 3
+
+                repeat
+                    task.wait(0.1)
+                    cashAfter = getCashAmount()
+                until cashAfter and cashAfter > cashBefore or os.clock() >= deadline
+            end
 
             if cashBefore and cashAfter and cashAfter > cashBefore then
                 earned = cashAfter - cashBefore
