@@ -2349,7 +2349,8 @@ local function applyPlayerSettings()
 
     if humanoid
         and (toggles.RunawaysPlayerGodMode and toggles.RunawaysPlayerGodMode.Value
-            or library.AutoFarm and library.AutoFarm.Running and library.AutoFarm:GetContext() == "Game")
+            or library.AutoFarm and library.AutoFarm.Running and library.AutoFarm:GetContext() == "Game"
+            or library.MapSweep and library.MapSweep.ProtectDepth > 0)
     then
         applyGodMode(humanoid)
     end
@@ -4654,6 +4655,1035 @@ function library.LobbyShop:Destroy()
     table.clear(self.Entries)
 end
 
+library.MapSweep = {
+    Token = nil,
+    Running = false,
+    JobId = "",
+    StartPosition = nil,
+    Progress = 1,
+    FullSweepJob = "",
+    KeepJob = "",
+    KeepTools = setmetatable({}, { __mode = "k" }),
+    KeepNames = {
+        Briefcase = true,
+    },
+    Counters = {},
+    Attempts = setmetatable({}, { __mode = "k" }),
+    Broken = setmetatable({}, { __mode = "k" }),
+    ProtectDepth = 0,
+    OnStatus = nil,
+    Label = nil,
+    Stats = {
+        Waypoints = 0,
+        Looted = 0,
+        Sold = 0,
+        Drops = 0,
+        Credz = 0,
+        Sources = 0,
+        Cash = 0,
+    },
+}
+
+function library.MapSweep:GetCharacter()
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if character and humanoid and root and humanoid.Health > 0 then
+        return character, humanoid, root
+    end
+end
+
+function library.MapSweep:GetSetting(id, name, default)
+    local option = options[id] or toggles[id]
+
+    if option and option.Value ~= nil then
+        return option.Value
+    end
+
+    local config = library.AutoFarm and library.AutoFarm.Config
+
+    if config and config[name] ~= nil then
+        return config[name]
+    end
+
+    return default
+end
+
+function library.MapSweep:SettingCallback(name)
+    return function(value)
+        library.AutoFarm.Config[name] = value
+
+        if library.AutoFarm.StateReady then
+            library.AutoFarm:Persist()
+        end
+    end
+end
+
+function library.MapSweep:SetStatus(text)
+    if self.Label and type(self.Label.SetText) == "function" then
+        pcall(self.Label.SetText, self.Label, "Sweep: " .. text)
+    end
+
+    if self.OnStatus then
+        pcall(self.OnStatus, text)
+    end
+end
+
+function library.MapSweep:SetProtected(value)
+    self.ProtectDepth = math.max(0, self.ProtectDepth + (value and 1 or -1))
+
+    if self.ProtectDepth > 0 then
+        local humanoid = getHumanoid()
+
+        if humanoid then
+            applyGodMode(humanoid)
+        end
+    elseif not (toggles.RunawaysPlayerGodMode and toggles.RunawaysPlayerGodMode.Value)
+        and not (library.AutoFarm.Running and library.AutoFarm:GetContext() == "Game")
+    then
+        restoreGodMode()
+    end
+end
+
+function library.MapSweep:IsNearCounter(position, radius)
+    for _, entry in self.Counters do
+        local offset = entry.Position - position
+
+        if Vector3.new(offset.X, 0, offset.Z).Magnitude <= radius then
+            return true
+        end
+    end
+
+    return false
+end
+
+function library.MapSweep:SyncServer()
+    if self.JobId == game.JobId then
+        return
+    end
+
+    self.JobId = game.JobId
+    self.StartPosition = nil
+    self.Progress = 1
+    table.clear(self.Counters)
+end
+
+function library.MapSweep:GetStartPosition()
+    self:SyncServer()
+
+    if self.StartPosition then
+        return self.StartPosition
+    end
+
+    local start = teleports:GetStartCFrame()
+    local position = start and start.Position
+
+    if not position then
+        local map = workspace:FindFirstChild("Map")
+        local area = map and map:FindFirstChild("StartArea")
+        local part = area and area:FindFirstChildWhichIsA("BasePart", true)
+
+        position = part and part.Position + Vector3.yAxis * 4
+    end
+
+    if not position then
+        local _, _, root = self:GetCharacter()
+
+        position = root and root.Position
+    end
+
+    self.StartPosition = position
+
+    return position
+end
+
+function library.MapSweep:GetRoute()
+    local start = self:GetStartPosition()
+    local endZ = teleports:GetEndZ()
+
+    if not start or not endZ then
+        return nil, "Route is unavailable"
+    end
+
+    local step = math.clamp(tonumber(self:GetSetting("RunawaysSweepStep", "SweepStep", 400)) or 400, 100, 3000)
+    local direction = endZ >= start.Z and 1 or -1
+    local finish = Vector3.new(start.X, start.Y, endZ - direction * 80)
+    local map = workspace:FindFirstChild("Map")
+    local buildings = map and map:FindFirstChild("Buildings")
+    local customs = buildings and buildings:FindFirstChild("CustomsFinal")
+
+    if customs then
+        local ok, pivot = pcall(customs.GetPivot, customs)
+
+        if ok then
+            finish = Vector3.new(pivot.Position.X, pivot.Position.Y + 4, finish.Z)
+        end
+    end
+
+    local count = math.max(1, math.ceil(math.abs(finish.Z - start.Z) / step))
+    local route = {}
+
+    for index = 0, count do
+        route[#route + 1] = start:Lerp(finish, index / count)
+    end
+
+    return route
+end
+
+function library.MapSweep:Place(destination)
+    local character, humanoid, root = self:GetCharacter()
+
+    if not character then
+        return false
+    end
+
+    if humanoid.SeatPart then
+        humanoid.Sit = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        RunService.Heartbeat:Wait()
+    end
+
+    character:PivotTo(destination)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    return true
+end
+
+function library.MapSweep:Approach(part, distance)
+    local _, _, root = self:GetCharacter()
+
+    if not root or not part or not part:IsDescendantOf(workspace) then
+        return false
+    end
+
+    local offset = root.Position - part.Position
+    local direction = Vector3.new(offset.X, 0, offset.Z)
+
+    direction = direction.Magnitude > 0.1 and direction.Unit or Vector3.xAxis
+
+    local position = part.Position + direction * (distance or 3) + Vector3.yAxis * 2.5
+
+    return self:Place(CFrame.lookAt(position, Vector3.new(part.Position.X, position.Y, part.Position.Z)))
+end
+
+function library.MapSweep:Hover(position)
+    local character = self:GetCharacter()
+
+    if not character then
+        return false
+    end
+
+    teleports:Stream(position)
+
+    local parameters = RaycastParams.new()
+
+    parameters.FilterType = Enum.RaycastFilterType.Exclude
+    parameters.FilterDescendantsInstances = { character }
+    parameters.RespectCanCollide = true
+
+    local result = workspace:Raycast(position + Vector3.yAxis * 250, -Vector3.yAxis * 600, parameters)
+
+    return result ~= nil and self:Place(CFrame.new(result.Position + Vector3.yAxis * 3.5))
+end
+
+function library.MapSweep:GetCounterParts(counter)
+    if not counter or not counter:IsDescendantOf(workspace) then
+        return
+    end
+
+    local volume = counter:FindFirstChild("Volume", true)
+    local bell = counter:FindFirstChild("CallBell", true)
+    local prompt = bell and bell:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+    if volume and volume:IsA("BasePart") and bell and bell:IsA("BasePart") and prompt then
+        return volume, bell, prompt
+    end
+end
+
+function library.MapSweep:TrackCounters()
+    for _, counter in CollectionService:GetTagged("PawnCounter") do
+        local volume = self:GetCounterParts(counter)
+
+        if volume then
+            local key = math.floor(volume.Position.X / 16) .. ":" .. math.floor(volume.Position.Z / 16)
+            local entry = self.Counters[key] or {}
+
+            entry.Position = volume.Position
+            entry.Instance = counter
+            self.Counters[key] = entry
+        end
+    end
+end
+
+function library.MapSweep:GetLiveCounter(position)
+    local best
+    local bestDistance = math.huge
+
+    for _, counter in CollectionService:GetTagged("PawnCounter") do
+        local volume = self:GetCounterParts(counter)
+        local distance = volume and (volume.Position - position).Magnitude
+
+        if distance and distance < bestDistance then
+            best = counter
+            bestDistance = distance
+        end
+    end
+
+    return best
+end
+
+function library.MapSweep:ResolveCounter(entry, shouldContinue)
+    if self:GetCounterParts(entry.Instance) then
+        return entry.Instance
+    end
+
+    teleports:Stream(entry.Position)
+
+    local expires = os.clock() + 4
+
+    repeat
+        for _, counter in CollectionService:GetTagged("PawnCounter") do
+            local volume = self:GetCounterParts(counter)
+
+            if volume and (volume.Position - entry.Position).Magnitude <= 16 then
+                entry.Instance = counter
+                return counter
+            end
+        end
+
+        task.wait(0.1)
+    until os.clock() >= expires or not shouldContinue()
+end
+
+function library.MapSweep:ProtectInventory()
+    if self.KeepJob == game.JobId then
+        return
+    end
+
+    self.KeepJob = game.JobId
+    table.clear(self.KeepTools)
+
+    for _, container in { player:FindFirstChildOfClass("Backpack"), player.Character } do
+        if container then
+            for _, tool in container:QueryDescendants("> Tool") do
+                self.KeepTools[tool] = true
+            end
+        end
+    end
+end
+
+function library.MapSweep:GetSellTools(protect)
+    local exclusions = options.SellExclusions and table.clone(options.SellExclusions.Value) or { Backpack = true }
+    local tools = {}
+
+    for _, container in { player:FindFirstChildOfClass("Backpack"), player.Character } do
+        if container then
+            for _, tool in container:QueryDescendants("> Tool") do
+                local category = getToolCategory(tool)
+                local value = lootValueByName[tool.Name]
+
+                if value
+                    and value > 0
+                    and not tool:HasTag("Undroppable")
+                    and not (category and exclusions[category])
+                    and not (protect and (self.KeepTools[tool] or self.KeepNames[tool.Name]))
+                then
+                    tools[#tools + 1] = tool
+                end
+            end
+        end
+    end
+
+    table.sort(tools, function(a, b)
+        return lootValueByName[a.Name] > lootValueByName[b.Name]
+    end)
+
+    return tools
+end
+
+function library.MapSweep:SellAtCounter(counter, shouldContinue, protect, camera)
+    local volume, bell, prompt = self:GetCounterParts(counter)
+    local character, humanoid = self:GetCharacter()
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    local sold = 0
+    local failed = 0
+
+    if not volume then
+        return sold, failed, nil, "Pawn shop is not available."
+    end
+
+    if not character or not backpack then
+        return sold, failed, nil, "Inventory is not ready."
+    end
+
+    local tools = self:GetSellTools(protect)
+
+    if #tools == 0 then
+        return sold, failed
+    end
+
+    local direction = bell.Position - volume.Position
+
+    direction = Vector3.new(direction.X, 0, direction.Z)
+    direction = direction.Magnitude > 0.1 and direction.Unit or -volume.CFrame.LookVector
+
+    local position = volume.Position + direction * 3.8
+
+    position = Vector3.new(position.X, volume.Position.Y + 0.35, position.Z)
+
+    local stand = CFrame.lookAt(position, Vector3.new(volume.Position.X, position.Y, volume.Position.Z))
+    local hurt = false
+    local lastHealth = humanoid.Health
+    local healthConnection = humanoid.HealthChanged:Connect(function(health)
+        if health < lastHealth - 0.5 then
+            hurt = true
+        end
+
+        lastHealth = health
+    end)
+
+    local function hold()
+        self:Place(stand)
+
+        if hurt then
+            hurt = false
+            killAllNPCs(30)
+        end
+    end
+
+    humanoid:UnequipTools()
+    self:Place(stand)
+
+    if camera then
+        camera.CFrame = CFrame.lookAt(position + Vector3.yAxis * 1.5, volume.Position)
+    end
+
+    task.wait(0.3)
+
+    local function sellReady()
+        return prompt.Parent ~= nil and prompt.Enabled and prompt.ActionText:find("%$%s*[%d,]+") ~= nil
+    end
+
+    local function getPrice()
+        local digits = prompt.ActionText:match("%$%s*([%d,]+)")
+
+        return digits and tonumber((digits:gsub(",", ""))) or 0
+    end
+
+    local function press()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            prompt:InputHoldBegin()
+            task.wait(prompt.HoldDuration + 0.1)
+            prompt:InputHoldEnd()
+        end
+    end
+
+    local batchSize = math.clamp(math.floor(tonumber(self:GetSetting("RunawaysSweepBatch", "SweepBatch", 5)) or 5), 1, 10)
+    local cashBefore = bringItems:GetCashAmount()
+    local index = 1
+
+    while index <= #tools and shouldContinue() do
+        local pending = {}
+        local deposited = 0
+        local batchValue = 0
+
+        hold()
+
+        while #pending < batchSize and index <= #tools do
+            local tool = tools[index]
+
+            index += 1
+
+            if tool.Parent == backpack or tool.Parent == character then
+                if pcall(flow.Loot.LootUnequip, tool, tool:HasTag("RemoteOnly")) then
+                    pending[#pending + 1] = tool
+                else
+                    failed += 1
+                end
+
+                task.wait(0.02)
+            end
+        end
+
+        local deadline = os.clock() + 0.75
+
+        repeat
+            local waiting = false
+
+            for _, tool in pending do
+                if tool.Parent == backpack or tool.Parent == character then
+                    waiting = true
+                    break
+                end
+            end
+
+            if waiting then
+                task.wait()
+            end
+        until not waiting or os.clock() >= deadline
+
+        for _, tool in pending do
+            if tool.Parent ~= backpack and tool.Parent ~= character then
+                deposited += 1
+                batchValue += lootValueByName[tool.Name]
+            else
+                failed += 1
+            end
+        end
+
+        if deposited > 0 then
+            local lastPrice = -1
+            local changedAt = os.clock()
+
+            deadline = os.clock() + 3
+
+            repeat
+                task.wait(0.05)
+
+                local price = sellReady() and getPrice() or -1
+
+                if price ~= lastPrice then
+                    lastPrice = price
+                    changedAt = os.clock()
+                end
+            until sellReady() and (lastPrice >= batchValue or os.clock() - changedAt >= 0.3)
+                or os.clock() >= deadline
+
+            if not sellReady() then
+                failed += deposited
+                break
+            end
+
+            local batchCash = bringItems:GetCashAmount()
+            local soldInBatch = 0
+
+            for _ = 1, deposited do
+                local currentCash = bringItems:GetCashAmount()
+
+                if batchCash and currentCash and currentCash - batchCash >= batchValue then
+                    soldInBatch = deposited
+                    break
+                end
+
+                deadline = os.clock() + 1.5
+
+                repeat
+                    task.wait(0.03)
+                    currentCash = bringItems:GetCashAmount()
+                until sellReady()
+                    or batchCash and currentCash and currentCash - batchCash >= batchValue
+                    or os.clock() >= deadline
+
+                if batchCash and currentCash and currentCash - batchCash >= batchValue then
+                    soldInBatch = deposited
+                    break
+                end
+
+                if not sellReady() then
+                    break
+                end
+
+                local clickCash = currentCash
+                local confirmed = false
+
+                hold()
+                pcall(press)
+                deadline = os.clock() + 6
+
+                repeat
+                    task.wait(0.03)
+                    currentCash = bringItems:GetCashAmount()
+                    confirmed = not sellReady() or clickCash and currentCash and currentCash > clickCash
+                until confirmed or os.clock() >= deadline
+
+                if not confirmed then
+                    break
+                end
+
+                deadline = os.clock() + 2
+
+                repeat
+                    task.wait(0.03)
+                until not sellReady() or os.clock() >= deadline
+
+                if not sellReady() then
+                    soldInBatch = deposited
+                    break
+                end
+
+                soldInBatch += 1
+            end
+
+            local currentCash = bringItems:GetCashAmount()
+
+            if batchCash and currentCash and currentCash - batchCash >= batchValue then
+                soldInBatch = deposited
+            end
+
+            sold += soldInBatch
+
+            if soldInBatch < deposited then
+                failed += deposited - soldInBatch
+                break
+            end
+        end
+    end
+
+    healthConnection:Disconnect()
+
+    local cashAfter = bringItems:GetCashAmount()
+
+    if sold > 0 and cashBefore and cashAfter and cashAfter <= cashBefore then
+        local deadline = os.clock() + 2
+
+        repeat
+            task.wait(0.1)
+            cashAfter = bringItems:GetCashAmount()
+        until cashAfter and cashAfter > cashBefore or os.clock() >= deadline
+    end
+
+    return sold, failed, cashBefore and cashAfter and cashAfter > cashBefore and cashAfter - cashBefore or nil
+end
+
+function library.MapSweep:Sell(shouldContinue)
+    if #self:GetSellTools(true) == 0 then
+        return true
+    end
+
+    local _, _, root = self:GetCharacter()
+
+    if not root then
+        return false, "Character is not ready."
+    end
+
+    self:TrackCounters()
+
+    local origin = root.Position
+    local tried = {}
+
+    for _ = 1, 3 do
+        local entry
+        local bestDistance = math.huge
+
+        for _, candidate in self.Counters do
+            local distance = (candidate.Position - origin).Magnitude
+
+            if not tried[candidate] and distance < bestDistance then
+                entry = candidate
+                bestDistance = distance
+            end
+        end
+
+        if not entry or not shouldContinue() then
+            break
+        end
+
+        tried[entry] = true
+        self:SetStatus("Selling loot at the pawn shop")
+
+        local counter = self:ResolveCounter(entry, shouldContinue)
+
+        if counter then
+            local sold, failed, _, message = self:SellAtCounter(counter, shouldContinue, true)
+
+            self.Stats.Sold += sold
+
+            return sold > 0 or failed == 0, message
+        end
+    end
+
+    return false, "No pawn shop is available yet"
+end
+
+function library.MapSweep:BreakSources(shouldContinue)
+    if not flow.DamageToOpen or type(flow.DamageToOpen.Damage) ~= "function" then
+        return 0
+    end
+
+    local selected = options.RunawaysCashSources and options.RunawaysCashSources.Value
+    local safeShops = self:GetSetting("RunawaysSweepSafeShops", "SweepSafeShops", true)
+    local count = 0
+
+    for _, source in CollectionService:GetTagged("DamageToOpen") do
+        if not shouldContinue() then
+            break
+        end
+
+        local attempts = self.Broken[source] or 0
+        local health = source:FindFirstChild("Health")
+
+        if attempts < 2 and health and health:IsA("NumberValue") and health.Value > 0 and bringItems:IsCashSource(source) then
+            local part = source.PrimaryPart or source:FindFirstChildWhichIsA("BasePart", true)
+            local enabled = not selected
+
+            for tag, active in selected or {} do
+                if active and source:HasTag(tag) then
+                    enabled = true
+                    break
+                end
+            end
+
+            if safeShops and part and self:IsNearCounter(part.Position, 40) then
+                enabled = false
+            end
+
+            if enabled then
+                local maxHealth = source:FindFirstChild("MaxHealth")
+
+                if attempts > 0 then
+                    self:Approach(part, 4)
+                    task.wait(0.15)
+                end
+
+                self.Broken[source] = attempts + 1
+                pcall(flow.DamageToOpen.Damage, source, math.max(health.Value, maxHealth and maxHealth.Value or 0, 1) * 10, "melee")
+                count += 1
+            end
+        end
+    end
+
+    return count
+end
+
+function library.MapSweep:CollectTagged(instance, sensor, collect)
+    if not self:Approach(sensor) then
+        return false
+    end
+
+    task.wait(0.2)
+
+    for _ = 1, 2 do
+        local before = bringItems:GetCashAmount()
+
+        pcall(collect, instance)
+
+        local expires = os.clock() + 0.5
+
+        repeat
+            task.wait(0.05)
+
+            local current = bringItems:GetCashAmount()
+
+            if not instance:IsDescendantOf(workspace) or before and current and current > before then
+                return true
+            end
+        until os.clock() >= expires
+    end
+
+    return false
+end
+
+function library.MapSweep:CollectDrops(shouldContinue)
+    local jobs = {}
+    local collected = 0
+
+    if flow.Credz and type(flow.Credz.Collect) == "function" then
+        for _, credz in CollectionService:GetTagged("Credz") do
+            local holder = credz.Parent
+            local sensor = holder and holder:FindFirstChild("TouchSensor", true)
+
+            if credz:IsDescendantOf(workspace) and sensor and sensor:IsA("BasePart") then
+                jobs[#jobs + 1] = { Instance = credz, Sensor = sensor, Collect = flow.Credz.Collect, Stat = "Credz" }
+            end
+        end
+    end
+
+    if flow.Cash and type(flow.Cash.Collect) == "function" then
+        for _, cash in bringItems:GetCashDrops(false) do
+            jobs[#jobs + 1] = {
+                Instance = cash,
+                Sensor = cash.Parent:FindFirstChild("TouchSensor", true),
+                Collect = flow.Cash.Collect,
+                Stat = "Drops",
+            }
+        end
+    end
+
+    for _, job in jobs do
+        if not shouldContinue() then
+            break
+        end
+
+        local attempts = self.Attempts[job.Instance] or 0
+
+        if attempts < 2 and job.Instance:IsDescendantOf(workspace) then
+            self.Attempts[job.Instance] = attempts + 1
+            self:SetStatus(job.Stat == "Credz" and "Collecting Credz" or "Collecting cash")
+
+            if self:CollectTagged(job.Instance, job.Sensor, job.Collect) then
+                collected += 1
+                self.Stats[job.Stat] += 1
+            end
+        end
+    end
+
+    return collected
+end
+
+function library.MapSweep:GetLootTargets()
+    local minValue = tonumber(self:GetSetting("RunawaysSweepMinValue", "SweepMinValue", 20)) or 20
+    local exclusions = options.SellExclusions and options.SellExclusions.Value or { Backpack = true }
+    local safeShops = self:GetSetting("RunawaysSweepSafeShops", "SweepSafeShops", true)
+    local _, limit = getBackpackUsage()
+    local items = getLoot()
+    local targets = {}
+
+    for _, item in items do
+        if (self.Attempts[item] or 0) < 2 and not (safeShops and self:IsNearCounter(item.PrimaryPart.Position, 40)) then
+            local value = tonumber(lootValueByName[item.Name]) or 0
+            local category = dropCategoryByName[item.Name]
+            local upgrade = limits[item.Name] and limit and limits[item.Name] > limit
+            local keep = self.KeepNames[item.Name] and remoteShop:CountNamedTools(item.Name) == 0
+
+            if upgrade or keep then
+                targets[#targets + 1] = { Item = item, Priority = math.huge }
+            elseif not self.KeepNames[item.Name]
+                and value > 0
+                and value >= minValue
+                and not (category and exclusions[category])
+            then
+                targets[#targets + 1] = { Item = item, Priority = value }
+            end
+        end
+    end
+
+    table.sort(targets, function(a, b)
+        return a.Priority > b.Priority
+    end)
+
+    return targets
+end
+
+function library.MapSweep:PickUp(item)
+    local _, _, root = self:GetCharacter()
+
+    if not root or not isLoot(item) then
+        return false
+    end
+
+    local part = item.PrimaryPart
+    local far = (root.Position - part.Position).Magnitude > 6
+
+    if far then
+        self:Place(getPickupCFrame(root, part))
+        task.wait(0.18)
+    end
+
+    if not isLoot(item) then
+        return false
+    end
+
+    local ok, result = pcall(flow.Loot.LootEquip, part)
+
+    if far and (not ok or result ~= "Success") and isLoot(item) then
+        task.wait(0.15)
+        ok, result = pcall(flow.Loot.LootEquip, part)
+    end
+
+    return ok and result == "Success"
+end
+
+function library.MapSweep:LootItems(shouldContinue, sellContinue)
+    local looted = 0
+
+    for _, target in self:GetLootTargets() do
+        if not shouldContinue() then
+            break
+        end
+
+        local item = target.Item
+
+        if isLoot(item) then
+            local used, limit = getBackpackUsage()
+
+            if used and limit and used >= limit then
+                self:Sell(sellContinue)
+                used, limit = getBackpackUsage()
+            end
+
+            if not used or not limit or used >= limit then
+                break
+            end
+
+            self.Attempts[item] = (self.Attempts[item] or 0) + 1
+            self:SetStatus(string.format("Looting %s ($%s)", formatName(item.Name), tostring(lootValueByName[item.Name] or 0)))
+
+            if self:PickUp(item) then
+                looted += 1
+                self.Stats.Looted += 1
+            end
+        end
+    end
+
+    return looted
+end
+
+function library.MapSweep:Harvest(shouldContinue, sellContinue)
+    if self:GetSetting("RunawaysSweepSources", "SweepSources", true) then
+        self.Stats.Sources += self:BreakSources(shouldContinue)
+    end
+
+    self:CollectDrops(shouldContinue)
+    self:LootItems(shouldContinue, sellContinue)
+    self:CollectDrops(shouldContinue)
+end
+
+function library.MapSweep:Run(settings)
+    if self.Running then
+        return false, "Sweep is already running"
+    end
+
+    if busy then
+        return false, "Another inventory action is running"
+    end
+
+    local token = {}
+    local deadline = settings.Deadline or math.huge
+    local external = settings.ShouldContinue
+
+    self.Token = token
+    self.Running = true
+    self.OnStatus = settings.OnStatus
+    busy = true
+    self:SetProtected(true)
+
+    for name in self.Stats do
+        self.Stats[name] = 0
+    end
+
+    local function alive()
+        return self.Token == token
+            and not library.Unloaded
+            and (not external or external())
+            and self:GetCharacter() ~= nil
+    end
+
+    local function harvestContinue()
+        return alive() and os.clock() < deadline - 6
+    end
+
+    local function sellContinue()
+        return alive() and os.clock() < deadline
+    end
+
+    local cashBefore = bringItems:GetCashAmount()
+    local ok, message = pcall(function()
+        self:SyncServer()
+        self:ProtectInventory()
+
+        local route, routeError = self:GetRoute()
+
+        if not route then
+            error(routeError, 0)
+        end
+
+        local index = settings.Resume and math.clamp(self.Progress, 1, #route) or 1
+
+        while index <= #route and harvestContinue() do
+            self:SetStatus(string.format("Flying over the map %d/%d", index, #route))
+            self:Hover(route[index])
+
+            if route[index + 1] then
+                task.spawn(teleports.Stream, teleports, route[index + 1])
+            end
+
+            if settings.Disengage then
+                library.AutoFarm:DisengageHelicopter()
+            end
+
+            self:TrackCounters()
+            self:Harvest(harvestContinue, sellContinue)
+            self.Stats.Waypoints += 1
+            index += 1
+            self.Progress = index
+        end
+
+        if index > #route then
+            self.Progress = 1
+        end
+
+        if sellContinue() then
+            local sellOk, sellError = self:Sell(sellContinue)
+
+            if not sellOk and sellError then
+                error(sellError, 0)
+            end
+        end
+    end)
+
+    local cashAfter = bringItems:GetCashAmount()
+
+    self.Stats.Cash = cashBefore and cashAfter and math.max(cashAfter - cashBefore, 0) or 0
+
+    if self.Token == token then
+        self.Token = nil
+    end
+
+    self.Running = false
+    self.OnStatus = nil
+    busy = false
+    self:SetProtected(false)
+    self:SetStatus(ok and string.format("Done | +$%d | %d sold", math.floor(self.Stats.Cash), self.Stats.Sold) or tostring(message))
+
+    return ok, message, table.clone(self.Stats)
+end
+
+function library.MapSweep:StartManual()
+    if self.Running then
+        notify("Sweep is already running.", 3)
+        return
+    end
+
+    if busy then
+        notify("Another inventory action is running.", 3)
+        return
+    end
+
+    if library.AutoFarm.Running then
+        notify("Auto Farm runs the sweep by itself.", 4)
+        return
+    end
+
+    task.spawn(function()
+        local character = player.Character
+        local startPivot = character and character:GetPivot()
+        local limit = tonumber(self:GetSetting("RunawaysAutoFarmSweepLimit", "SweepLimit", 180)) or 180
+        local ok, message, stats = self:Run({
+            Deadline = os.clock() + limit,
+        })
+
+        if startPivot and player.Character == character then
+            teleports:Stream(startPivot.Position)
+            self:Place(startPivot)
+        end
+
+        if library.Unloaded then
+            return
+        end
+
+        if ok then
+            notify(string.format(
+                "Sweep finished: +$%d, looted %d, sold %d, cash drops %d, Credz %d.",
+                math.floor(stats.Cash),
+                stats.Looted,
+                stats.Sold,
+                stats.Drops,
+                stats.Credz
+            ), 8)
+        else
+            notify("Sweep stopped: " .. tostring(message), 6)
+        end
+    end)
+end
+
+function library.MapSweep:Stop()
+    self.Token = nil
+end
+
 library.AutoFarm = {
     Version = 1,
     StatsVersion = 2,
@@ -4729,6 +5759,14 @@ library.AutoFarm = {
         RetryDelay = 10,
         SafeGateWait = true,
         AutoReplay = true,
+        SweepGate = true,
+        SweepFull = false,
+        SweepLimit = 180,
+        SweepStep = 400,
+        SweepMinValue = 20,
+        SweepSources = true,
+        SweepBatch = 5,
+        SweepSafeShops = true,
     },
     Webhook = {
         Enabled = false,
@@ -4751,6 +5789,8 @@ library.AutoFarm = {
         Retries = 0,
         Replays = 0,
         CashEarned = 0,
+        SweepCash = 0,
+        SweepItems = 0,
         TotalRunTime = 0,
         BestRun = 0,
         LastRun = 0,
@@ -5014,6 +6054,7 @@ function library.AutoFarm:UpdateUI()
     self:SetLabel("Failures", "Failures: " .. self.Stats.Failed .. " | Retries: " .. self.Stats.Retries .. " | Replay votes: " .. self.Stats.Replays .. " | Teleports: " .. self.Stats.Teleports)
     self:SetLabel("Timing", "Average: " .. self:FormatDuration(average) .. " | Best: " .. self:FormatDuration(self.Stats.BestRun) .. " | Last: " .. self:FormatDuration(self.Stats.LastRun))
     self:SetLabel("Combat", "NPC attack requests: " .. self.Stats.NPCAttacks .. " | Gate activations: " .. self.Stats.GateActivations)
+    self:SetLabel("Sweep", "Sweep cash: $" .. tostring(math.floor(self.Stats.SweepCash)) .. " | Items sold: " .. tostring(math.floor(self.Stats.SweepItems)))
     self:SetLabel("Run", "Current run: " .. self:FormatDuration(runElapsed) .. " | Gate: " .. self.GateText)
     self:SetLabel("Error", "Last error: " .. self.LastError)
     self:SetLabel("Webhook", "Webhook: " .. self.WebhookStatus)
@@ -5045,6 +6086,8 @@ function library.AutoFarm:ResetStats()
         Retries = 0,
         Replays = 0,
         CashEarned = 0,
+        SweepCash = 0,
+        SweepItems = 0,
         TotalRunTime = 0,
         BestRun = 0,
         LastRun = 0,
@@ -5112,6 +6155,14 @@ function library.AutoFarm:GetSnapshot()
             RetryDelay = options.RunawaysAutoFarmRetryDelay and options.RunawaysAutoFarmRetryDelay.Value or self.Config.RetryDelay,
             SafeGateWait = self.Config.SafeGateWait,
             AutoReplay = self.Config.AutoReplay,
+            SweepGate = library.MapSweep:GetSetting("RunawaysAutoFarmSweep", "SweepGate", true),
+            SweepFull = library.MapSweep:GetSetting("RunawaysAutoFarmSweepFull", "SweepFull", false),
+            SweepLimit = library.MapSweep:GetSetting("RunawaysAutoFarmSweepLimit", "SweepLimit", 180),
+            SweepStep = library.MapSweep:GetSetting("RunawaysSweepStep", "SweepStep", 400),
+            SweepMinValue = library.MapSweep:GetSetting("RunawaysSweepMinValue", "SweepMinValue", 20),
+            SweepSources = library.MapSweep:GetSetting("RunawaysSweepSources", "SweepSources", true),
+            SweepBatch = library.MapSweep:GetSetting("RunawaysSweepBatch", "SweepBatch", 5),
+            SweepSafeShops = library.MapSweep:GetSetting("RunawaysSweepSafeShops", "SweepSafeShops", true),
         },
         Webhook = {
             Enabled = toggles.RunawaysAutoFarmWebhook and toggles.RunawaysAutoFarmWebhook.Value or self.Webhook.Enabled,
@@ -5180,6 +6231,16 @@ function library.AutoFarm:ApplyPreferences(snapshot)
 
         if type(snapshot.Config.AutoReplay) == "boolean" then
             self.Config.AutoReplay = snapshot.Config.AutoReplay
+        end
+
+        for _, name in { "SweepLimit", "SweepStep", "SweepMinValue", "SweepBatch" } do
+            self.Config[name] = tonumber(snapshot.Config[name]) or self.Config[name]
+        end
+
+        for _, name in { "SweepGate", "SweepFull", "SweepSources", "SweepSafeShops" } do
+            if type(snapshot.Config[name]) == "boolean" then
+                self.Config[name] = snapshot.Config[name]
+            end
         end
     end
 
@@ -5425,6 +6486,28 @@ function library.AutoFarm:ApplyStoredOptions()
 
     if toggles.RunawaysAutoFarmAutoReplay then
         toggles.RunawaysAutoFarmAutoReplay:SetValue(self.Config.AutoReplay)
+    end
+
+    for id, name in {
+        RunawaysAutoFarmSweepLimit = "SweepLimit",
+        RunawaysSweepStep = "SweepStep",
+        RunawaysSweepMinValue = "SweepMinValue",
+        RunawaysSweepBatch = "SweepBatch",
+    } do
+        if options[id] then
+            options[id]:SetValue(self.Config[name])
+        end
+    end
+
+    for id, name in {
+        RunawaysAutoFarmSweep = "SweepGate",
+        RunawaysAutoFarmSweepFull = "SweepFull",
+        RunawaysSweepSources = "SweepSources",
+        RunawaysSweepSafeShops = "SweepSafeShops",
+    } do
+        if toggles[id] then
+            toggles[id]:SetValue(self.Config[name])
+        end
     end
 
     if options.RunawaysAutoFarmWebhookURL then
@@ -7699,6 +8782,80 @@ function library.AutoFarm:CrossGate(token, prompt, direction, endZ)
     return false, result
 end
 
+function library.AutoFarm:RunSweep(token, phase, duration)
+    local sweep = library.MapSweep
+
+    if busy or sweep.Running or duration < 10 then
+        return false
+    end
+
+    local checkAt = 0
+    local ended = false
+    local ok, message, stats = sweep:Run({
+        Deadline = os.clock() + duration,
+        Resume = true,
+        Disengage = true,
+        ShouldContinue = function()
+            if os.clock() >= checkAt then
+                checkAt = os.clock() + 0.5
+                ended = self:GetEndScreen() ~= nil
+            end
+
+            return self.Running and self.Token == token and not self.Teleporting and not ended
+        end,
+        OnStatus = function(text)
+            self.RunHeartbeat = os.clock()
+            self:SetPhase(phase, text)
+        end,
+    })
+
+    if stats then
+        self.Stats.SweepCash += stats.Cash
+        self.Stats.SweepItems += stats.Sold
+    end
+
+    if not ok then
+        self.LastError = "Sweep: " .. tostring(message)
+    end
+
+    self:Persist()
+
+    return ok
+end
+
+function library.AutoFarm:SweepDuringGate(token, prompt, direction, endZ)
+    if self.GateStartedAt <= 0 or self.LastGameJob ~= game.JobId then
+        return prompt
+    end
+
+    local remaining = 120 - (os.time() - self.GateStartedAt) - 12
+
+    if remaining < 15 then
+        return prompt
+    end
+
+    self:ReleaseSafeZone()
+    self:RunSweep(token, "Gate Sweep", remaining)
+
+    if not self.Running or self.Token ~= token or self:GetEndScreen() then
+        return prompt
+    end
+
+    local reached, reachedDirection, reachedEndZ = self:ReachGate(token)
+
+    if reached then
+        self.GatePassage = self:GetGatePassage(reached, reachedDirection or direction, reachedEndZ or endZ) or self.GatePassage
+
+        return reached
+    end
+
+    if self.GatePassage then
+        pcall(self.IsGatePassageOpen, self, self.GatePassage)
+    end
+
+    return prompt
+end
+
 function library.AutoFarm:RunGame(token)
     if self.PendingFinish and self.LastGameJob ~= "" and self.LastGameJob ~= game.JobId then
         self:CompletePending("Replay transition confirmed")
@@ -7759,6 +8916,24 @@ function library.AutoFarm:RunGame(token)
         end
     end
 
+    library.MapSweep:GetStartPosition()
+
+    if self.GateStartedAt <= 0
+        and library.MapSweep.FullSweepJob ~= game.JobId
+        and library.MapSweep:GetSetting("RunawaysAutoFarmSweepFull", "SweepFull", false)
+    then
+        library.MapSweep.FullSweepJob = game.JobId
+        self:RunSweep(token, "Loot Sweep", tonumber(library.MapSweep:GetSetting("RunawaysAutoFarmSweepLimit", "SweepLimit", 180)) or 180)
+
+        if not self.Running or self.Token ~= token then
+            return true
+        end
+
+        if self:GetEndScreen() then
+            return self:HandleEndScreen(token)
+        end
+    end
+
     local prompt, direction, endZ, reachError, gateAlreadyActivated = self:ReachGate(token)
 
     if not prompt and not gateAlreadyActivated then
@@ -7777,6 +8952,14 @@ function library.AutoFarm:RunGame(token)
         end
 
         records = activationRecords
+    end
+
+    if library.MapSweep:GetSetting("RunawaysAutoFarmSweep", "SweepGate", true) then
+        prompt = self:SweepDuringGate(token, prompt, direction, endZ)
+
+        if not self.Running or self.Token ~= token then
+            return true
+        end
     end
 
     local opened, gateError = self:WaitForGate(token, prompt, records)
@@ -8210,6 +9393,7 @@ local silentAimBox = library.IsMobile and tabs.Weapon:AddLeftGroupbox("Silent Ai
 library.AutoFarm.ControlBox = tabs.AutoFarm:AddLeftGroupbox("Automation", "bot")
 library.AutoFarm.StatsBox = tabs.AutoFarm:AddLeftGroupbox("Session Statistics", "chart-no-axes-combined")
 library.AutoFarm.RunBox = library.IsMobile and tabs.AutoFarm:AddLeftGroupbox("Run Details", "route") or tabs.AutoFarm:AddRightGroupbox("Run Details", "route")
+library.MapSweep.Box = library.IsMobile and tabs.AutoFarm:AddLeftGroupbox("Loot Sweep", "radar") or tabs.AutoFarm:AddRightGroupbox("Loot Sweep", "radar")
 library.AutoFarm.WebhookBox = library.IsMobile and tabs.AutoFarm:AddLeftGroupbox("Webhook", "webhook") or tabs.AutoFarm:AddRightGroupbox("Webhook", "webhook")
 local espLeft = tabs.ESP:AddLeftTabbox()
 local espRight = library.IsMobile and espLeft or tabs.ESP:AddRightTabbox()
@@ -8318,6 +9502,7 @@ library.AutoFarm.Labels.Runs = library.AutoFarm.StatsBox:AddLabel("Runs: 0 compl
 library.AutoFarm.Labels.Failures = library.AutoFarm.StatsBox:AddLabel("Failures: 0 | Retries: 0 | Replay votes: 0 | Teleports: 0", true)
 library.AutoFarm.Labels.Timing = library.AutoFarm.StatsBox:AddLabel("Average: 00:00:00 | Best: 00:00:00 | Last: 00:00:00", true)
 library.AutoFarm.Labels.Combat = library.AutoFarm.StatsBox:AddLabel("NPC attack requests: 0 | Gate activations: 0", true)
+library.AutoFarm.Labels.Sweep = library.AutoFarm.StatsBox:AddLabel("Sweep cash: $0 | Items sold: 0", true)
 
 library.AutoFarm.Labels.Status = library.AutoFarm.RunBox:AddLabel("Status: Idle\nReady", true)
 library.AutoFarm.Labels.Context = library.AutoFarm.RunBox:AddLabel("Context: Detecting", true)
@@ -8372,6 +9557,79 @@ library.AutoFarm.WebhookBox:AddDropdown("RunawaysAutoFarmWebhookEvents", {
 
 library.AutoFarm.WebhookBox:AddButton("Send Test Webhook", function()
     library.AutoFarm:SendWebhook("Test", "Webhook connection test", true)
+end)
+
+library.MapSweep.Label = library.MapSweep.Box:AddLabel("Sweep: Idle", true)
+
+library.MapSweep.Box:AddToggle("RunawaysAutoFarmSweep", {
+    Text = "Sweep During Gate Countdown",
+    Default = true,
+    Callback = library.MapSweep:SettingCallback("SweepGate"),
+})
+
+library.MapSweep.Box:AddToggle("RunawaysAutoFarmSweepFull", {
+    Text = "Full Sweep Before Gate",
+    Default = false,
+    Callback = library.MapSweep:SettingCallback("SweepFull"),
+})
+
+library.MapSweep.Box:AddToggle("RunawaysSweepSources", {
+    Text = "Break Cash Sources",
+    Default = true,
+    Callback = library.MapSweep:SettingCallback("SweepSources"),
+})
+
+library.MapSweep.Box:AddToggle("RunawaysSweepSafeShops", {
+    Text = "Don't Rob Pawn Shops",
+    Default = true,
+    Callback = library.MapSweep:SettingCallback("SweepSafeShops"),
+})
+
+library.MapSweep.Box:AddSlider("RunawaysAutoFarmSweepLimit", {
+    Text = "Full Sweep Time Limit",
+    Default = 180,
+    Min = 30,
+    Max = 900,
+    Rounding = 0,
+    Suffix = " seconds",
+    Callback = library.MapSweep:SettingCallback("SweepLimit"),
+})
+
+library.MapSweep.Box:AddSlider("RunawaysSweepStep", {
+    Text = "Flight Step",
+    Default = 400,
+    Min = 150,
+    Max = 1500,
+    Rounding = 0,
+    Suffix = " studs",
+    Callback = library.MapSweep:SettingCallback("SweepStep"),
+})
+
+library.MapSweep.Box:AddSlider("RunawaysSweepMinValue", {
+    Text = "Min Item Value ($)",
+    Default = 20,
+    Min = 0,
+    Max = 1000,
+    Rounding = 0,
+    Callback = library.MapSweep:SettingCallback("SweepMinValue"),
+})
+
+library.MapSweep.Box:AddSlider("RunawaysSweepBatch", {
+    Text = "Sell Batch Size",
+    Default = 5,
+    Min = 1,
+    Max = 10,
+    Rounding = 0,
+    Suffix = " items",
+    Callback = library.MapSweep:SettingCallback("SweepBatch"),
+})
+
+library.MapSweep.Box:AddButton("Sweep Map Now", function()
+    library.MapSweep:StartManual()
+end)
+
+library.MapSweep.Box:AddButton("Stop Sweep", function()
+    library.MapSweep:Stop()
 end)
 
 library.AutoFarm.TeleportConnection = player.OnTeleport:Connect(function(state)
@@ -9686,10 +10944,6 @@ local function dropAllLoot()
     end)
 end
 
-local function getCashAmount()
-    return bringItems:GetCashAmount()
-end
-
 local function sellAllLoot()
     if busy then
         notify("Inventory action is already running.", 3)
@@ -9710,16 +10964,13 @@ local function sellAllLoot()
         local cameraSubject
         local cameraType
 
+        library.MapSweep:SetProtected(true)
+
         local ok, message = pcall(function()
             local backpack = player:FindFirstChildOfClass("Backpack")
             character = player.Character
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
             root = character and character:FindFirstChild("HumanoidRootPart")
-            local counter = CollectionService:GetTagged("PawnCounter")[1]
-            local volume = counter and counter:FindFirstChild("Volume", true)
-            local bell = counter and counter:FindFirstChild("CallBell", true)
-            local prompt = bell and bell:FindFirstChildWhichIsA("ProximityPrompt", true)
-            local exclusions = table.clone(options.SellExclusions.Value)
 
             if not backpack or not character or not humanoid or not root or humanoid.Health <= 0 then
                 error("Inventory is not ready.", 0)
@@ -9729,28 +10980,13 @@ local function sellAllLoot()
                 error("Exit the vehicle first.", 0)
             end
 
-            if not volume or not bell or not prompt then
+            local counter = library.MapSweep:GetLiveCounter(root.Position)
+
+            if not counter then
                 error("Pawn shop is not available.", 0)
             end
 
-            local function sellReady()
-                return prompt.Enabled and prompt.ActionText:find("%$%s*[%d,]+") ~= nil
-            end
-
-            local tools = {}
-
-            for _, container in { backpack, character } do
-                for _, tool in container:QueryDescendants("> Tool") do
-                    local category = getToolCategory(tool)
-                    local value = lootValueByName[tool.Name]
-
-                    if value and value > 0 and not tool:HasTag("Undroppable") and not (category and exclusions[category]) then
-                        tools[#tools + 1] = tool
-                    end
-                end
-            end
-
-            if #tools == 0 then
+            if #library.MapSweep:GetSellTools(false) == 0 then
                 return
             end
 
@@ -9765,177 +11001,18 @@ local function sellAllLoot()
                 camera.CFrame = cameraCFrame
             end
 
-            local direction = bell.Position - volume.Position
-            direction = Vector3.new(direction.X, 0, direction.Z)
-            direction = direction.Magnitude > 0.1 and direction.Unit or -volume.CFrame.LookVector
+            local sellError
 
-            local position = volume.Position + direction * 3.8
-            position = Vector3.new(position.X, volume.Position.Y + 0.35, position.Z)
+            sold, failed, earned, sellError = library.MapSweep:SellAtCounter(counter, function()
+                return not library.Unloaded
+            end, false, camera)
 
-            humanoid:UnequipTools()
-            character:PivotTo(CFrame.lookAt(position, Vector3.new(volume.Position.X, position.Y, volume.Position.Z)))
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-
-            if camera then
-                camera.CFrame = CFrame.lookAt(position + Vector3.yAxis * 1.5, volume.Position)
-            end
-
-            task.wait(0.5)
-
-            local cashBefore = getCashAmount()
-            local index = 1
-
-            while index <= #tools and not library.Unloaded do
-                local deposited = 0
-                local batchValue = 0
-
-                for _ = 1, 5 do
-                    local tool = tools[index]
-
-                    if not tool then
-                        break
-                    end
-
-                    index += 1
-
-                    if tool.Parent == backpack or tool.Parent == character then
-                        local callOk = pcall(flow.Loot.LootUnequip, tool, tool:HasTag("RemoteOnly"))
-
-                        if callOk then
-                            local deadline = os.clock() + 0.75
-
-                            repeat
-                                task.wait()
-                            until tool.Parent ~= backpack and tool.Parent ~= character or os.clock() >= deadline
-
-                            if tool.Parent ~= backpack and tool.Parent ~= character then
-                                deposited += 1
-                                batchValue += lootValueByName[tool.Name]
-                            else
-                                failed += 1
-                            end
-                        else
-                            failed += 1
-                        end
-
-                        task.wait(0.04)
-                    end
-                end
-
-                if deposited > 0 then
-                    local deadline = os.clock() + 3
-
-                    repeat
-                        task.wait(0.05)
-                    until sellReady() or os.clock() >= deadline
-
-                    if not sellReady() then
-                        failed += deposited
-                        break
-                    end
-
-                    local batchCash = getCashAmount()
-
-                    local soldInBatch = 0
-
-                    task.wait(0.15)
-
-                    for _ = 1, deposited do
-                        local currentCash = getCashAmount()
-
-                        if batchCash and currentCash and currentCash - batchCash >= batchValue then
-                            soldInBatch = deposited
-                            break
-                        end
-
-                        deadline = os.clock() + 1.5
-
-                        repeat
-                            task.wait(0.03)
-                            currentCash = getCashAmount()
-                        until sellReady()
-                            or batchCash and currentCash and currentCash - batchCash >= batchValue
-                            or os.clock() >= deadline
-
-                        if batchCash and currentCash and currentCash - batchCash >= batchValue then
-                            soldInBatch = deposited
-                            break
-                        end
-
-                        if not sellReady() then
-                            break
-                        end
-
-                        local clickCash = currentCash
-
-                        if fireproximityprompt then
-                            fireproximityprompt(prompt)
-                        else
-                            prompt:InputHoldBegin()
-                            task.wait(prompt.HoldDuration + 0.1)
-                            prompt:InputHoldEnd()
-                        end
-
-                        local confirmed = false
-
-                        deadline = os.clock() + 8
-
-                        repeat
-                            task.wait(0.05)
-                            currentCash = getCashAmount()
-                            confirmed = not sellReady() or clickCash and currentCash and currentCash > clickCash
-                        until confirmed or os.clock() >= deadline
-
-                        if not confirmed then
-                            break
-                        end
-
-                        deadline = os.clock() + 3
-
-                        repeat
-                            task.wait(0.05)
-                        until not sellReady() or os.clock() >= deadline
-
-                        if not sellReady() then
-                            soldInBatch = deposited
-                            break
-                        end
-
-                        soldInBatch += 1
-                        task.wait(0.05)
-                    end
-
-                    local currentCash = getCashAmount()
-
-                    if batchCash and currentCash and currentCash - batchCash >= batchValue then
-                        soldInBatch = deposited
-                    end
-
-                    sold += soldInBatch
-
-                    if soldInBatch < deposited then
-                        failed += deposited - soldInBatch
-                        break
-                    end
-                end
-            end
-
-            local cashAfter = getCashAmount()
-
-            if sold > 0 and cashBefore and cashAfter and cashAfter <= cashBefore then
-                local deadline = os.clock() + 3
-
-                repeat
-                    task.wait(0.1)
-                    cashAfter = getCashAmount()
-                until cashAfter and cashAfter > cashBefore or os.clock() >= deadline
-            end
-
-            if cashBefore and cashAfter and cashAfter > cashBefore then
-                earned = cashAfter - cashBefore
+            if sellError then
+                error(sellError, 0)
             end
         end)
+
+        library.MapSweep:SetProtected(false)
 
         if startPivot and character and character.Parent and root and root.Parent == character then
             character:PivotTo(startPivot)
@@ -11044,6 +12121,7 @@ library.ToggleKeybind = options.MenuKeybind
 
 library:OnUnload(function()
     library.AutoFarm:Destroy(env.RunawaysScriptReloading == true or library.AutoFarm.Teleporting)
+    library.MapSweep:Stop()
     bringItems:Destroy()
     remoteShop:Destroy()
     library.LobbyShop:Destroy()
