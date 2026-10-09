@@ -24,6 +24,100 @@ Environment.JunkMechanicsHub = Hub
 local LibraryUrl = "https://raw.githubusercontent.com/PookiePepelsss/Airflow-UI/refs/heads/main/Source.luau"
 local CreditsUrl = "https://raw.githubusercontent.com/Bac0nHck/Something/refs/heads/main/telegram"
 
+local Storage = {
+	Folder = "JunkMechanics",
+	Configs = "JunkMechanics/Configs",
+	Settings = { AutoLoad = "", AutoSave = false },
+}
+
+function Storage.Ensure(path)
+	if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
+		return
+	end
+	pcall(function()
+		if not isfolder(path) then
+			makefolder(path)
+		end
+	end)
+end
+
+function Storage.Write(name, content)
+	if type(writefile) ~= "function" then
+		return false
+	end
+	Storage.Ensure(Storage.Folder)
+	return (pcall(writefile, Storage.Folder .. "/" .. name, content))
+end
+
+function Storage.Read(name, legacy)
+	if type(readfile) ~= "function" or type(isfile) ~= "function" then
+		return nil
+	end
+	local path = Storage.Folder .. "/" .. name
+	local ok, content = pcall(function()
+		if isfile(path) then
+			return readfile(path)
+		end
+		if legacy and isfile(legacy) then
+			local old = readfile(legacy)
+			if Storage.Write(name, old) and type(delfile) == "function" then
+				pcall(delfile, legacy)
+			end
+			return old
+		end
+		return nil
+	end)
+	if ok and type(content) == "string" then
+		return content
+	end
+	return nil
+end
+
+function Storage.Load(name, legacy)
+	local content = Storage.Read(name, legacy)
+	if not content then
+		return nil
+	end
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(content)
+	end)
+	if ok and type(data) == "table" then
+		return data
+	end
+	return nil
+end
+
+function Storage.Save(name, data)
+	local ok, content = pcall(function()
+		return HttpService:JSONEncode(data)
+	end)
+	return ok and Storage.Write(name, content)
+end
+
+function Storage.LoadSettings()
+	local data = Storage.Load("settings.json")
+	if data then
+		Storage.Settings.AutoLoad = type(data.AutoLoad) == "string" and data.AutoLoad or ""
+		Storage.Settings.AutoSave = data.AutoSave == true
+	end
+end
+
+function Storage.SaveSettings()
+	Storage.Save("settings.json", Storage.Settings)
+end
+
+function Storage.HasConfig(name)
+	if type(name) ~= "string" or name == "" or type(isfile) ~= "function" then
+		return false
+	end
+	local ok, exists = pcall(isfile, Storage.Configs .. "/" .. name .. ".json")
+	return ok and exists == true
+end
+
+Storage.Ensure(Storage.Folder)
+Storage.Ensure(Storage.Configs)
+Storage.LoadSettings()
+
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameData = Shared:WaitForChild("Data")
 local ClientFolder = ReplicatedStorage:WaitForChild("Client")
@@ -2319,8 +2413,8 @@ local function groundAt(position)
 	return hit and hit.Position or position
 end
 
-local Farm = { Current = nil, YardIndex = 0, Done = {}, PaintTries = {}, Hooks = {}, Pick = { Repair = {}, Sell = {} }, Favorites = {}, FavoritesFile = "JunkMechanics_favorites.json" }
-local Garage = { File = "JunkMechanics_cars.json", Owned = {} }
+local Farm = { Current = nil, YardIndex = 0, Done = {}, PaintTries = {}, Hooks = {}, Pick = { Repair = {}, Sell = {} }, Favorites = {} }
+local Garage = { Owned = {} }
 local Wheels = {
 	Slots = type(VehicleModel) == "table" and type(VehicleModel.WheelSlots) == "table" and VehicleModel.WheelSlots or { "FL", "FR", "RL", "RR" },
 	MachineTag = type(MachineCatalog.WheelsMachine) == "table" and MachineCatalog.WheelsMachine.Tag or "WHEELS_MACHINE",
@@ -4599,44 +4693,26 @@ function Wheels.Run(car)
 end
 
 function Garage.Load()
-	if type(readfile) ~= "function" or type(isfile) ~= "function" then
+	local list = Storage.Load("cars.json", "JunkMechanics_cars.json")
+	if not list then
 		return
 	end
-	local ok, content = pcall(function()
-		if isfile(Garage.File) then
-			return readfile(Garage.File)
-		end
-		return nil
-	end)
-	if not ok or type(content) ~= "string" then
-		return
-	end
-	local decoded, list = pcall(function()
-		return HttpService:JSONDecode(content)
-	end)
-	if decoded and type(list) == "table" then
-		for key, value in pairs(list) do
-			if type(key) == "number" and type(value) == "string" then
-				Garage.Owned[value] = true
-			elseif type(key) == "string" then
-				local paid = tonumber(value)
-				Garage.Owned[key] = paid and paid > 0 and paid or true
-			end
+	for key, value in pairs(list) do
+		if type(key) == "number" and type(value) == "string" then
+			Garage.Owned[value] = true
+		elseif type(key) == "string" then
+			local paid = tonumber(value)
+			Garage.Owned[key] = paid and paid > 0 and paid or true
 		end
 	end
 end
 
 function Garage.Save()
-	if type(writefile) ~= "function" then
-		return
-	end
 	local map = {}
 	for id, value in pairs(Garage.Owned) do
 		map[id] = type(value) == "number" and value or 0
 	end
-	pcall(function()
-		writefile(Garage.File, HttpService:JSONEncode(map))
-	end)
+	Storage.Save("cars.json", map)
 end
 
 function Garage.Mark(id, owned, paid)
@@ -4837,41 +4913,23 @@ end
 Garage.Load()
 
 function Farm.LoadFavorites()
-	if type(readfile) ~= "function" or type(isfile) ~= "function" then
+	local list = Storage.Load("favorites.json", "JunkMechanics_favorites.json")
+	if not list then
 		return
 	end
-	local ok, content = pcall(function()
-		if isfile(Farm.FavoritesFile) then
-			return readfile(Farm.FavoritesFile)
-		end
-		return nil
-	end)
-	if not ok or type(content) ~= "string" then
-		return
-	end
-	local decoded, list = pcall(function()
-		return HttpService:JSONDecode(content)
-	end)
-	if decoded and type(list) == "table" then
-		for _, id in ipairs(list) do
-			if type(id) == "string" then
-				Farm.Favorites[id] = true
-			end
+	for _, id in ipairs(list) do
+		if type(id) == "string" then
+			Farm.Favorites[id] = true
 		end
 	end
 end
 
 function Farm.SaveFavorites()
-	if type(writefile) ~= "function" then
-		return
-	end
 	local list = {}
 	for id in pairs(Farm.Favorites) do
 		table.insert(list, id)
 	end
-	pcall(function()
-		writefile(Farm.FavoritesFile, HttpService:JSONEncode(list))
-	end)
+	Storage.Save("favorites.json", list)
 end
 
 function Farm.Forget(id)
@@ -5347,7 +5405,7 @@ Hub.State = State
 Hub.Filter = Filter
 Hub.Stats = Stats
 Hub.Garage = Garage
-Hub.Internal = { Move = Move, Roads = Roads, Car = Car, Machines = Machines, Repair = Repair, Seller = Seller, Paint = Paint, Shop = Shop, Wheels = Wheels, Parts = Parts, Pace = Pace, Carry = Carry }
+Hub.Internal = { Move = Move, Roads = Roads, Car = Car, Machines = Machines, Repair = Repair, Seller = Seller, Paint = Paint, Shop = Shop, Wheels = Wheels, Parts = Parts, Pace = Pace, Carry = Carry, Storage = Storage }
 
 function Hub.SetFarm(value)
 	if UI.FarmToggle then
@@ -5532,6 +5590,12 @@ local Window = Airflow:CreateWindow({
 	ToggleUIKeybind = "RightControl",
 	OpenButton = { Title = WindowTitle, Icon = "car" },
 	KeepOnScreen = true,
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = Storage.Configs,
+		FileName = Storage.HasConfig(Storage.Settings.AutoLoad) and Storage.Settings.AutoLoad or "default",
+		AutoSave = Storage.Settings.AutoSave,
+	},
 	Loading = {
 		Enabled = true,
 		Title = WindowTitle,
@@ -5585,7 +5649,6 @@ local function signedMoney(value)
 end
 
 local Webhook = {
-	File = "JunkMechanics_webhook.json",
 	Settings = {
 		Url = "",
 		Enabled = true,
@@ -5624,18 +5687,11 @@ Environment.JunkMechanicsAlerted = Webhook.Alerted
 Hub.Internal.Webhook = Webhook
 
 function Webhook.Load()
-	if type(readfile) == "function" and type(isfile) == "function" then
-		local ok, data = pcall(function()
-			if isfile(Webhook.File) then
-				return HttpService:JSONDecode(readfile(Webhook.File))
-			end
-			return nil
-		end)
-		if ok and type(data) == "table" then
-			for key, default in pairs(Webhook.Settings) do
-				if type(data[key]) == type(default) then
-					Webhook.Settings[key] = data[key]
-				end
+	local data = Storage.Load("webhook.json", "JunkMechanics_webhook.json")
+	if data then
+		for key, default in pairs(Webhook.Settings) do
+			if type(data[key]) == type(default) then
+				Webhook.Settings[key] = data[key]
 			end
 		end
 	end
@@ -5650,12 +5706,7 @@ function Webhook.Load()
 end
 
 function Webhook.Save()
-	if type(writefile) ~= "function" then
-		return
-	end
-	pcall(function()
-		writefile(Webhook.File, HttpService:JSONEncode(Webhook.Settings))
-	end)
+	Storage.Save("webhook.json", Webhook.Settings)
 end
 
 function Webhook.Valid(url)
@@ -6267,6 +6318,7 @@ FarmTab:CreateSection("Manual")
 
 UI.BuyToggle = FarmTab:CreateToggle({
 	Name = "Auto Buy",
+	Flag = "AutoBuy",
 	CurrentValue = false,
 	Callback = function(value)
 		State.AutoBuy = value == true
@@ -6279,6 +6331,7 @@ table.insert(Hub.Toggles, UI.BuyToggle)
 
 UI.RepairToggle = FarmTab:CreateToggle({
 	Name = "Auto Repair",
+	Flag = "AutoRepair",
 	CurrentValue = false,
 	Callback = function(value)
 		State.AutoRepair = value == true
@@ -6291,6 +6344,7 @@ table.insert(Hub.Toggles, UI.RepairToggle)
 
 UI.SellToggle = FarmTab:CreateToggle({
 	Name = "Auto Sell",
+	Flag = "AutoSell",
 	CurrentValue = false,
 	Callback = function(value)
 		State.AutoSell = value == true
@@ -6418,6 +6472,7 @@ FilterTab:CreateSection("Which Cars To Buy")
 
 FilterTab:CreateDropdown({
 	Name = "Tiers",
+	Flag = "FilterTiers",
 	Options = { "Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5" },
 	CurrentOption = {},
 	MultipleOptions = true,
@@ -6435,6 +6490,7 @@ FilterTab:CreateDropdown({
 
 UI.FilterCars = FilterTab:CreateDropdown({
 	Name = "Cars",
+	Flag = "FilterCars",
 	Options = CarOptions,
 	CurrentOption = {},
 	MultipleOptions = true,
@@ -6445,6 +6501,7 @@ UI.FilterCars = FilterTab:CreateDropdown({
 
 FilterTab:CreateDropdown({
 	Name = "Junkyards",
+	Flag = "FilterJunkyards",
 	Options = JunkyardOptions,
 	CurrentOption = {},
 	MultipleOptions = true,
@@ -6462,7 +6519,9 @@ FilterTab:CreateDropdown({
 
 FilterTab:CreateDropdown({
 	Name = "Pick By",
+	Flag = "FilterSort",
 	Options = { "Best Profit", "Best Margin", "Cheapest", "Closest" },
+	CurrentOption = "Best Profit",
 	MultipleOptions = false,
 	Callback = function(selection)
 		local value = asList(selection)[1]
@@ -6472,9 +6531,10 @@ FilterTab:CreateDropdown({
 	end,
 })
 
-local function amountInput(tab, name, placeholder, apply)
+local function amountInput(tab, name, placeholder, apply, flag)
 	tab:CreateInput({
 		Name = name,
+		Flag = flag,
 		PlaceholderText = placeholder,
 		CurrentValue = "",
 		Callback = function(text)
@@ -6490,23 +6550,23 @@ end
 
 amountInput(FilterTab, "Min Price", "0 = any", function(amount)
 	Filter.MinPrice = amount
-end)
+end, "FilterMinPrice")
 
 amountInput(FilterTab, "Max Price", "0 = any", function(amount)
 	Filter.MaxPrice = amount
-end)
+end, "FilterMaxPrice")
 
 amountInput(FilterTab, "Min Profit", "0 = any, e.g. 5K", function(amount)
 	Filter.MinProfit = amount
-end)
+end, "FilterMinProfit")
 
 amountInput(FilterTab, "Min Margin %", "0 = any, e.g. 40", function(amount)
 	Filter.MinMargin = amount
-end)
+end, "FilterMinMargin")
 
 amountInput(FilterTab, "Keep Money", "Never spend below, e.g. 10K", function(amount)
 	Filter.Reserve = amount
-end)
+end, "FilterReserve")
 
 FilterTab:CreateSection("Preview")
 
@@ -6526,6 +6586,7 @@ RepairTab:CreateSection("Parts To Repair")
 
 RepairTab:CreateToggle({
 	Name = "Battery (Charger)",
+	Flag = "RepairBattery",
 	CurrentValue = true,
 	Callback = function(value)
 		State.RepairBattery = value == true
@@ -6534,6 +6595,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateToggle({
 	Name = "Mechanical Parts (Grinder)",
+	Flag = "RepairMechanical",
 	CurrentValue = true,
 	Callback = function(value)
 		State.RepairMechanical = value == true
@@ -6542,6 +6604,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateToggle({
 	Name = "Engine (Hoist)",
+	Flag = "RepairEngine",
 	CurrentValue = true,
 	Callback = function(value)
 		State.RepairEngine = value == true
@@ -6550,6 +6613,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateToggle({
 	Name = "Radiator (Sink)",
+	Flag = "RepairRadiator",
 	CurrentValue = true,
 	Callback = function(value)
 		State.RepairRadiator = value == true
@@ -6558,6 +6622,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateSlider({
 	Name = "Skip Parts With Wear Below %",
+	Flag = "MinWear",
 	Range = { 0, 50 },
 	Increment = 1,
 	CurrentValue = 2,
@@ -6568,6 +6633,7 @@ RepairTab:CreateSlider({
 
 RepairTab:CreateToggle({
 	Name = "Auto Install Missing Parts",
+	Flag = "AutoMissingParts",
 	CurrentValue = true,
 	Callback = function(value)
 		State.AutoMissingParts = value == true
@@ -6578,6 +6644,7 @@ RepairTab:CreateSection("Wheels")
 
 RepairTab:CreateToggle({
 	Name = "Replace Rusty Rims & Worn Tires",
+	Flag = "FixWheels",
 	CurrentValue = true,
 	Callback = function(value)
 		State.FixWheels = value == true
@@ -6586,6 +6653,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateSlider({
 	Name = "Replace Wheel Parts From Wear %",
+	Flag = "WheelMinWear",
 	Range = { 10, 90 },
 	Increment = 5,
 	CurrentValue = 30,
@@ -6613,6 +6681,7 @@ RepairTab:CreateSection("Minigames")
 
 RepairTab:CreateToggle({
 	Name = "Auto Minigames",
+	Flag = "AutoMinigames",
 	CurrentValue = true,
 	Callback = function(value)
 		State.AutoMinigames = value == true
@@ -6621,6 +6690,7 @@ RepairTab:CreateToggle({
 
 RepairTab:CreateSlider({
 	Name = "Wash Time (s)",
+	Flag = "WashDelay",
 	Range = { 2, 12 },
 	Increment = 1,
 	CurrentValue = 3,
@@ -6631,6 +6701,7 @@ RepairTab:CreateSlider({
 
 RepairTab:CreateSlider({
 	Name = "Weld Time (s)",
+	Flag = "WeldDelay",
 	Range = { 3, 20 },
 	Increment = 1,
 	CurrentValue = 6,
@@ -6648,6 +6719,7 @@ SellTab:CreateSection("Paint")
 
 SellTab:CreateToggle({
 	Name = "Paint Before Selling ($250)",
+	Flag = "Paint",
 	CurrentValue = true,
 	Callback = function(value)
 		State.Paint = value == true
@@ -6656,7 +6728,9 @@ SellTab:CreateToggle({
 
 SellTab:CreateDropdown({
 	Name = "Paint Color",
+	Flag = "PaintColor",
 	Options = { "Random", "Black", "White", "Red", "Blue", "Silver", "Green", "Yellow" },
+	CurrentOption = "Random",
 	MultipleOptions = false,
 	Callback = function(selection)
 		local value = asList(selection)[1]
@@ -6670,7 +6744,9 @@ SellTab:CreateSection("Seller")
 
 SellTab:CreateDropdown({
 	Name = "Seller",
+	Flag = "Seller",
 	Options = { "Juan", "Rick (Quick Sell)" },
+	CurrentOption = "Juan",
 	MultipleOptions = false,
 	Callback = function(selection)
 		local value = asList(selection)[1]
@@ -6682,6 +6758,7 @@ SellTab:CreateDropdown({
 
 SellTab:CreateToggle({
 	Name = "Mr. Lupin For Tier 4-5",
+	Flag = "UseLupin",
 	CurrentValue = true,
 	Callback = function(value)
 		State.UseLupin = value == true
@@ -6690,6 +6767,7 @@ SellTab:CreateToggle({
 
 SellTab:CreateSlider({
 	Name = "Rick Min % Of Car Value",
+	Flag = "RickMinPercent",
 	Range = { 50, 100 },
 	Increment = 1,
 	CurrentValue = 90,
@@ -6702,6 +6780,7 @@ SellTab:CreateSection("Negotiation")
 
 SellTab:CreateToggle({
 	Name = "Negotiate",
+	Flag = "Negotiate",
 	CurrentValue = false,
 	Callback = function(value)
 		State.Negotiate = value == true
@@ -6710,6 +6789,7 @@ SellTab:CreateToggle({
 
 SellTab:CreateSlider({
 	Name = "Max Risk %",
+	Flag = "MaxRisk",
 	Range = { 5, 60 },
 	Increment = 1,
 	CurrentValue = 20,
@@ -6847,6 +6927,7 @@ SettingsTab:CreateSection("Farm")
 
 SettingsTab:CreateSlider({
 	Name = "Teleport Speed",
+	Flag = "GlideSpeed",
 	Range = { 60, 300 },
 	Increment = 10,
 	CurrentValue = 150,
@@ -6857,6 +6938,7 @@ SettingsTab:CreateSlider({
 
 SettingsTab:CreateToggle({
 	Name = "Quick Travel To Junkyards",
+	Flag = "QuickTravel",
 	CurrentValue = true,
 	Callback = function(value)
 		State.QuickTravel = value == true
@@ -6865,6 +6947,7 @@ SettingsTab:CreateToggle({
 
 SettingsTab:CreateToggle({
 	Name = "Continue Farm Cars From Garage",
+	Flag = "UseGarage",
 	CurrentValue = true,
 	Callback = function(value)
 		State.UseGarage = value == true
@@ -6873,6 +6956,7 @@ SettingsTab:CreateToggle({
 
 SettingsTab:CreateToggle({
 	Name = "Also Sell My Other Garage Cars",
+	Flag = "UseAllGarageCars",
 	CurrentValue = false,
 	Callback = function(value)
 		State.UseAllGarageCars = value == true
@@ -6881,16 +6965,180 @@ SettingsTab:CreateToggle({
 
 SettingsTab:CreateToggle({
 	Name = "Anti AFK",
+	Flag = "AntiAfk",
 	CurrentValue = true,
 	Callback = function(value)
 		State.AntiAfk = value == true
 	end,
 })
 
+SettingsTab:CreateSection("Configs")
+
+function UI.SetSilent(element, value)
+	if element then
+		pcall(function()
+			element:Set(value, true)
+		end)
+	end
+end
+
+function UI.ConfigTarget()
+	local typed = UI.ConfigInput and string.match(tostring(UI.ConfigInput:Get() or ""), "^%s*(.-)%s*$") or ""
+	if typed ~= "" then
+		return typed
+	end
+	local selected = UI.ConfigList and asList(UI.ConfigList:Get())[1]
+	return type(selected) == "string" and selected ~= "" and selected or nil
+end
+
+function UI.RefreshConfigs(select)
+	if not UI.ConfigList then
+		return
+	end
+	pcall(function()
+		UI.ConfigList:Refresh(Window:ListConfigs(), select ~= nil)
+		if select then
+			UI.ConfigList:Set(select, true)
+		end
+	end)
+end
+
+UI.ConfigInput = SettingsTab:CreateInput({
+	Name = "Config Name",
+	PlaceholderText = "Type a name to save",
+	CurrentValue = "",
+	Callback = function() end,
+})
+
+UI.ConfigList = SettingsTab:CreateDropdown({
+	Name = "Saved Configs",
+	Options = Window:ListConfigs(),
+	MultipleOptions = false,
+	Callback = function(selection)
+		local name = asList(selection)[1]
+		if type(name) == "string" then
+			UI.SetSilent(UI.ConfigInput, name)
+		end
+	end,
+})
+
+SettingsTab:CreateButton({
+	Name = "Save Config",
+	Icon = "save",
+	Callback = function()
+		local name = UI.ConfigTarget()
+		if not name then
+			UI.Notify("Configs", "Type a config name first", "Warning")
+			return
+		end
+		local ok, err = Window:SaveConfig(name)
+		if ok then
+			UI.RefreshConfigs(Window.ConfigName)
+			UI.Notify("Configs", "Saved " .. Window.ConfigName, "Success")
+		else
+			UI.Notify("Configs", "Save failed: " .. tostring(err), "Error")
+		end
+	end,
+})
+
+SettingsTab:CreateButton({
+	Name = "Load Config",
+	Icon = "folder-open",
+	Callback = function()
+		local name = UI.ConfigTarget()
+		if not name then
+			UI.Notify("Configs", "Pick a saved config first", "Warning")
+			return
+		end
+		local ok, err = Window:LoadConfig(name)
+		UI.Notify("Configs", ok and ("Loaded " .. name) or ("Load failed: " .. tostring(err)), ok and "Success" or "Error")
+	end,
+})
+
+SettingsTab:CreateButton({
+	Name = "Delete Config",
+	Icon = "trash-2",
+	Callback = function()
+		local name = UI.ConfigTarget()
+		if not name then
+			UI.Notify("Configs", "Pick a saved config first", "Warning")
+			return
+		end
+		Window:Confirm({
+			Title = "Delete Config",
+			Content = "Delete " .. name .. "? This cannot be undone.",
+			Icon = "trash-2",
+			ConfirmText = "Delete",
+			Callback = function()
+				local ok, err = Window:DeleteConfig(name)
+				if ok then
+					if Window.ConfigName == name then
+						Window.ConfigName = "default"
+					end
+					if Storage.Settings.AutoLoad == name then
+						Storage.Settings.AutoLoad = ""
+						Storage.SaveSettings()
+						UI.SetSilent(UI.AutoLoadToggle, false)
+					end
+					UI.SetSilent(UI.ConfigInput, "")
+				end
+				UI.RefreshConfigs()
+				UI.Notify("Configs", ok and ("Deleted " .. name) or ("Delete failed: " .. tostring(err)), ok and "Info" or "Error")
+			end,
+		})
+	end,
+})
+
+UI.Syncing = true
+UI.AutoLoadToggle = SettingsTab:CreateToggle({
+	Name = "Load Config On Start",
+	CurrentValue = Storage.HasConfig(Storage.Settings.AutoLoad),
+	Callback = function(value)
+		if UI.Syncing then
+			return
+		end
+		if value then
+			local name = UI.ConfigTarget() or Window.ConfigName
+			if not Storage.HasConfig(name) then
+				UI.Notify("Configs", "Save or pick a config first", "Warning")
+				task.defer(UI.SetSilent, UI.AutoLoadToggle, false)
+				return
+			end
+			Storage.Settings.AutoLoad = name
+			UI.Notify("Configs", name .. " will load when the script starts", "Success")
+		else
+			Storage.Settings.AutoLoad = ""
+		end
+		Storage.SaveSettings()
+	end,
+})
+UI.Syncing = false
+
+SettingsTab:CreateToggle({
+	Name = "Auto Save Config",
+	CurrentValue = Storage.Settings.AutoSave,
+	Callback = function(value)
+		value = value == true
+		Window:SetAutoSave(value)
+		if Storage.Settings.AutoSave ~= value then
+			Storage.Settings.AutoSave = value
+			Storage.SaveSettings()
+		end
+	end,
+})
+
+live(SettingsTab, function()
+	local auto = Storage.Settings.AutoLoad ~= "" and Storage.Settings.AutoLoad or "off"
+	return "Current: " .. tostring(Window.ConfigName) .. " | On start: " .. auto
+end, 1)
+
+SettingsTab:CreateLabel({ Text = "Files are kept in workspace/JunkMechanics" })
+
 SettingsTab:CreateSection("Menu")
 
 SettingsTab:CreateKeybind({
 	Name = "Toggle UI",
+	Flag = "MenuKeybind",
 	CurrentKeybind = "RightControl",
 	OnChanged = function(key)
 		Window:SetKeybind(key)
@@ -6933,3 +7181,17 @@ task.spawn(function()
 end)
 
 UI.Notify(WindowTitle, "Loaded", "Success")
+
+if Storage.HasConfig(Storage.Settings.AutoLoad) then
+	task.delay(1, function()
+		if not Hub.Running then
+			return
+		end
+		local name = Storage.Settings.AutoLoad
+		local ok, err = Window:LoadConfig(name)
+		if ok then
+			UI.RefreshConfigs(name)
+		end
+		UI.Notify("Configs", ok and ("Loaded " .. name) or ("Could not load " .. name .. ": " .. tostring(err)), ok and "Success" or "Warning")
+	end)
+end
