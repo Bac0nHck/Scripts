@@ -339,6 +339,7 @@ local App = {
     Dungeon = {Snapshot = nil, At = 0, StartAt = 0, CoinTried = {}},
     DungeonRun = {Origin = nil, Entered = false, ReturnAt = 0, Tried = setmetatable({}, {__mode = "k"}), LastPrompt = nil, Rejected = false},
     Strawberry = {Tried = setmetatable({}, {__mode = "k"}), Origin = nil, SpinAt = 0},
+    Vine = {Origin = nil, NextAt = 0, Confirmed = false, Awaiting = false, Active = false},
     Food = {MinX = 1, Price = nil, PriceAt = 0, Remaining = 0, RequestAt = 0, NextAt = 0, Waiting = false, Result = nil},
 }
 Environment[AppKey] = App
@@ -657,8 +658,10 @@ function App:HandleRoll(payload)
         else
             roll.NextAt = math.max(roll.NextAt, os.clock() + self:RollInterval())
         end
+    elseif payload.Source == "Vine" and self.Vine.Awaiting then
+        self.Vine.Confirmed = true
     end
-    if self.State.AutoBuy then
+    if self.State.AutoBuy or (payload.Source == "Vine" and self.State.AutoVine) then
         self:BuyBatch(results)
     end
 end
@@ -1146,7 +1149,7 @@ App:Feature("AutoRoll", {
         App.Roll.Awaiting = false
     end,
     Step = function(token)
-        if not Player:GetAttribute("Init") then
+        if not Player:GetAttribute("Init") or (App.State.AutoVine and App.Vine.Active) then
             return 0.5
         end
         local roll = App.Roll
@@ -2186,6 +2189,71 @@ App:Feature("AutoStrawberry", {
     end,
 })
 
+App:Feature("AutoVine", {
+    Enable = function()
+        local vine = App.Vine
+        vine.Origin = nil
+        vine.NextAt = 0
+        vine.Awaiting = false
+    end,
+    Disable = function()
+        local vine = App.Vine
+        local root = App:Root()
+        if vine.Origin and root and not Player:GetAttribute("DungeonSessionId") then
+            root.CFrame = vine.Origin
+        end
+        vine.Origin = nil
+        vine.Active = false
+        vine.Awaiting = false
+    end,
+    Step = function(token)
+        local vine = App.Vine
+        local model = workspace:FindFirstChild("Vine")
+        local queen = findPath(model, "Base", "Queen")
+        local root = App:Root()
+        local inDungeon = Player:GetAttribute("DungeonSessionId") ~= nil
+        local ready = workspace:GetAttribute("CurrentActivityId") == "Vine" and model ~= nil and model:GetAttribute("VineActivityReady") == true and queen ~= nil and queen:IsA("BasePart")
+        if not ready or not root or inDungeon then
+            vine.Active = false
+            if not ready then
+                App.Batches.Vine = nil
+                if vine.Origin and root and not inDungeon then
+                    root.CFrame = vine.Origin
+                    vine.Origin = nil
+                end
+            end
+            return 1
+        end
+        vine.Active = true
+        if (root.Position - queen.Position).Magnitude > 9 then
+            vine.Origin = vine.Origin or root.CFrame
+            root.CFrame = CFrame.new(queen.Position + Vector3.new(0, 5, 0))
+            root.AssemblyLinearVelocity = Vector3.zero
+            task.wait(0.4)
+        end
+        if not App.State.AutoBuy and App.Batches.Vine then
+            App:BuyBatch(App.Batches.Vine)
+        end
+        local now = os.clock()
+        if now < vine.NextAt then
+            return math.min(vine.NextAt - now, 0.2)
+        end
+        vine.Confirmed = false
+        vine.Awaiting = true
+        App:Send("RollAnt", {Source = "Vine"})
+        while not vine.Confirmed and os.clock() - now < 1 and App.Alive and App.State.AutoVine and App.Tokens.AutoVine == token do
+            task.wait(0.03)
+        end
+        vine.Awaiting = false
+        if vine.Confirmed then
+            vine.NextAt = now + App:RollInterval() + 0.1
+        else
+            vine.NextAt = os.clock() + 0.3
+        end
+        return 0
+    end,
+})
+
 App:Feature("AutoWheel", {
     Step = function()
         local model = Game.Wheel
@@ -2643,6 +2711,10 @@ EventsTab:CreateDivider()
 
 App:AddToggle(EventsTab, "AutoStrawberry", "Auto Strawberry Event", "Teleports to strawberry coins and picks them up")
 App:AddToggle(EventsTab, "AutoWheel", "Auto Spin Wheel", "Spends strawberry coins on the King's wheel")
+
+EventsTab:CreateDivider()
+
+App:AddToggle(EventsTab, "AutoVine", "Auto Vine Event", "Rolls Leaf ants at the Vine and buys them with the Auto Buy filters")
 
 App:AddToggle(RewardsTab, "AutoRewards", "Auto Claim Rewards")
 RewardsTab:CreateParagraph({
