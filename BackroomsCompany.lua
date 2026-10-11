@@ -46,7 +46,7 @@ local LoadingToken = {}
 Environment.TheBackroomsLoading = LoadingToken
 local LibraryUrl = "https://raw.githubusercontent.com/PookiePepelsss/Airflow-UI/2910b3532195935a00dacb479a0ded50f1f38a0a/Source.luau"
 local loaded, Airflow = pcall(function()
-	return loadstring(game:HttpGet(LibraryUrl))()
+	return loadstring(game.HttpGet(game, LibraryUrl))()
 end)
 if Environment.TheBackroomsLoading ~= LoadingToken then
 	return
@@ -78,6 +78,10 @@ local RestoreAntiEffects = type(Environment.TheBackroomsHub) == "table"
 local RestoreLightItems = type(Environment.TheBackroomsHub) == "table"
 	and Environment.TheBackroomsHub.LightItems
 	and Environment.TheBackroomsHub.LightItems.Enabled == true
+local RestoreDialogSkip
+if type(Environment.TheBackroomsHub) == "table" and Environment.TheBackroomsHub.DialogSkip then
+	RestoreDialogSkip = Environment.TheBackroomsHub.DialogSkip.Enabled == true
+end
 local RestorePlayer
 if type(Environment.TheBackroomsHub) == "table" and Environment.TheBackroomsHub.Player then
 	local previous = Environment.TheBackroomsHub.Player
@@ -139,6 +143,8 @@ local AntiEffects = { Enabled = false, Saved = {}, Connections = {} }
 Hub.AntiEffects = AntiEffects
 local LightItems = { Enabled = false, Connections = {} }
 Hub.LightItems = LightItems
+local DialogSkip = { Enabled = false, NextAttempt = 0 }
+Hub.DialogSkip = DialogSkip
 local PlayerSettings = {
 	Ready = false, Syncing = false, EnableJump = false, InfJump = false, Noclip = false,
 	Connections = {}, HumanoidConnections = {}, CollisionParts = {}, LastJump = 0,
@@ -1306,7 +1312,7 @@ local function auraStep()
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or not humanoid or humanoid.Health <= 0 or player:GetAttribute("Dead") or player:GetAttribute("Dying") then
+	if not root or not humanoid or humanoid.Health <= 0 or player:GetAttribute("Dead") or player:GetAttribute("Dying") or player:GetAttribute("DraggingTv") == true then
 		return
 	end
 	local now = os.clock()
@@ -1328,10 +1334,13 @@ local function auraStep()
 	local nearestItem, nearestPrompt
 	local nearestDistance = math.huge
 	for item in pairs(candidates) do
-		if not isMonster(item) and isFreeInWorld(item) and now >= (Aura.Cooldowns[item] or 0) then
+		local isTV = item:IsA("Model") and item:GetAttribute("Level188Tv") == true
+		local availableTV = not isTV or (item:GetAttribute("depositedAt") == nil and (tonumber(item:GetAttribute("HeldBy")) or 0) == 0)
+		if availableTV and not isMonster(item) and isFreeInWorld(item) and now >= (Aura.Cooldowns[item] or 0) then
 			local anchor = anchorPart(item)
-			local prompt = anchor and anchor:FindFirstChildOfClass("ProximityPrompt")
-			if anchor and prompt and prompt.Enabled then
+			local prompt = isTV and item:FindFirstChild("DragPrompt", true) or (anchor and anchor:FindFirstChildOfClass("ProximityPrompt"))
+			if isTV and prompt then anchor = prompt.Parent end
+			if anchor and anchor:IsA("BasePart") and prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled then
 				local distance = (root.Position - anchor.Position).Magnitude
 				if distance <= math.min(prompt.MaxActivationDistance, 8) and distance < nearestDistance then
 					local visible = true
@@ -1515,6 +1524,8 @@ function Hub.SetAutoFarm(enabled)
 	if enabled == Farm.Enabled then return end
 	Farm.Epoch += 1
 	Farm.Job, Farm.WaitingLevel, Farm.RoomArrival, Farm.RunStage = nil, nil, nil, nil
+	Farm.RestartVoted, Farm.RestartWarning = nil, nil
+	Farm.NextRestartAttempt = 0
 	if not enabled then
 		Farm.Elapsed += os.clock() - Farm.StartedAt
 		Farm.Enabled, Farm.Status = false, "Disabled"
@@ -1756,12 +1767,101 @@ local function farmTVFloor(root, humanoid, monsters)
 	return true
 end
 
+function Hub.SetDialogSkip(enabled)
+	DialogSkip.Enabled = enabled == true and Hub.Running
+	DialogSkip.LastLine, DialogSkip.NextAttempt, DialogSkip.Warning = nil, 0, nil
+end
+
+local function dialogSkipStep()
+	if not Hub.Running or not DialogSkip.Enabled or not Farm.Enabled
+		or ReplicatedStorage:GetAttribute("IntercomIntroRunning") ~= true then
+		DialogSkip.LastLine, DialogSkip.NextAttempt = nil, 0
+		return
+	end
+	local player = Players.LocalPlayer
+	local character = player.Character
+	if not character or player:GetAttribute("Dead") or player:GetAttribute("Dying")
+		or character:GetAttribute("AnimationLocked") == true then return end
+	local userId = tostring(player.UserId)
+	for voter in tostring(ReplicatedStorage:GetAttribute("IntercomSkipVoterIds") or ""):gmatch("[^,]+") do
+		if voter == userId then return end
+	end
+	local line = ReplicatedStorage:GetAttribute("IntercomLineIndex") or 0
+	local now = os.clock()
+	if DialogSkip.LastLine == line and now < DialogSkip.NextAttempt then return end
+	local remotes = ReplicatedStorage:FindFirstChild("RemoteEvents")
+	local intercom = remotes and remotes:FindFirstChild("Intercom")
+	local request = intercom and intercom:FindFirstChild("requestIntercomSkip")
+	if not request or not request:IsA("RemoteEvent") then return end
+	DialogSkip.LastLine, DialogSkip.NextAttempt = line, now + 1
+	local ok, failure = pcall(function() request:FireServer() end)
+	if not ok and not DialogSkip.Warning then
+		DialogSkip.Warning = true
+		warn("[TheBackrooms] Dialog skip: " .. tostring(failure))
+	end
+end
+
+function Hub.FarmRestartStep(humanoid)
+	if not Hub.Running or not Farm.Enabled then return false end
+	local player = Players.LocalPlayer
+	local ended = ReplicatedStorage:GetAttribute("Mode") == "MissionFailed"
+		or player:GetAttribute("Dead") == true or player:GetAttribute("Dying") == true
+		or (humanoid and humanoid.Health <= 0)
+	if not ended then
+		Farm.RestartVoted, Farm.RestartWarning = nil, nil
+		return false
+	end
+	Farm.Job = nil
+	local gui = player:FindFirstChildOfClass("PlayerGui")
+	local screen = gui and gui:FindFirstChild("MissionEndGui")
+	local backdrop = screen and screen:FindFirstChild("Backdrop")
+	local vote = backdrop and backdrop:FindFirstChild("VoteFrame")
+	local buttons = vote and vote:FindFirstChild("Buttons")
+	local button = buttons and buttons:FindFirstChild("NewGame")
+	if Farm.RestartVoted then
+		Farm.Status = "Waiting for new game"
+		return true
+	end
+	if not screen or not screen.Enabled or not vote or not vote.Visible
+		or not button or not button:IsA("GuiButton") or not button.Visible or not button.Active then
+		Farm.Status = "Waiting for mission to end"
+		return true
+	end
+	if os.clock() < (Farm.NextRestartAttempt or 0) then
+		Farm.Status = "Retrying new game request"
+		return true
+	end
+	local ok, failure = pcall(function()
+		if type(firesignal) == "function" then
+			firesignal(button.Activated)
+		else
+			local remotes = ReplicatedStorage:FindFirstChild("RemoteEvents")
+			local gameState = remotes and remotes:FindFirstChild("GameState")
+			local cast = gameState and gameState:FindFirstChild("MissionVoteCast")
+			if not cast or not cast:IsA("RemoteEvent") then error("New Game is unavailable") end
+			cast:FireServer("newGame")
+		end
+	end)
+	if ok then
+		Farm.RestartVoted, Farm.Status = true, "Waiting for new game"
+	else
+		Farm.NextRestartAttempt, Farm.Status = os.clock() + 3, "New game request failed"
+		if not Farm.RestartWarning then
+			Farm.RestartWarning = true
+			warn("[TheBackrooms] Auto Farm restart: " .. tostring(failure))
+			Hub.Notify("Auto Farm", "The New Game request failed. Waiting to retry.", "Warning")
+		end
+	end
+	return true
+end
+
 function Hub.AutoFarmStep()
 	if not Hub.Running or not Farm.Enabled then return end
 	local player = Players.LocalPlayer
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if Hub.FarmRestartStep(humanoid) then return end
 	if not root or not humanoid or humanoid.Health <= 0 or player:GetAttribute("Dead") or player:GetAttribute("Dying") then
 		Farm.Job, Farm.Status = nil, "Waiting for respawn"
 		return
@@ -1931,6 +2031,7 @@ end
 
 function Hub.StopAll()
 	Hub.Controls.FarmEnabled:Set(false)
+	Hub.Controls.DialogSkip:Set(false)
 	Hub.ResetPlayer()
 	Hub.Controls.ItemsAura:Set(false)
 	Hub.Controls.AutoDeliver:Set(false)
@@ -1963,6 +2064,7 @@ function Hub.Unload()
 	Hub.SetAutoReturn(false)
 	Hub.SetInfStamina(false)
 	Hub.SetLightItems(false)
+	Hub.SetDialogSkip(false)
 	Hub.Running = false
 	Esp.Enabled = false
 	Esp.MonstersEnabled = false
@@ -2074,6 +2176,11 @@ local ok, failure = xpcall(function()
 	})
 	Hub.Controls.FarmEnabled = FarmTab:CreateToggle({
 		Name = "Enabled", CurrentValue = false, Callback = Hub.SetAutoFarm,
+	})
+	Hub.Controls.DialogSkip = FarmTab:CreateToggle({
+		Name = "Fast Dialog Skip",
+		CurrentValue = true,
+		Callback = Hub.SetDialogSkip,
 	})
 	FarmTab:CreateSection("Statistics")
 	Hub.FarmLabels = {}
@@ -2347,6 +2454,7 @@ local ok, failure = xpcall(function()
 	end)
 	Hub.FarmWorker = task.spawn(function()
 		while Hub.Running do
+			dialogSkipStep()
 			if Farm.Enabled then
 				local ok, failure = xpcall(Hub.AutoFarmStep, debug.traceback)
 				if not ok then
@@ -2387,6 +2495,7 @@ local ok, failure = xpcall(function()
 	if RestoreLightItems then
 		Hub.Controls.LightItems:Set(true)
 	end
+	Hub.Controls.DialogSkip:Set(RestoreDialogSkip ~= false)
 	if RestorePlayer then
 		for _, key in ipairs({ "Speed", "JumpPower", "FOV" }) do
 			if RestorePlayer[key] ~= nil then Hub.Controls[key]:Set(RestorePlayer[key]) end
