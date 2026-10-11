@@ -1039,7 +1039,26 @@ function Hub.SetLightItems(enabled)
 	player:SetAttribute("weight", 0)
 end
 
+local function heldTelevision()
+	local player = Players.LocalPlayer
+	if ReplicatedStorage:GetAttribute("LevelVariant") ~= "Level188-SpecialLevel" or player:GetAttribute("DraggingTv") ~= true then return nil end
+	local container = itemsContainer()
+	if container then
+		for _, item in ipairs(container:GetChildren()) do
+			if item:IsA("Model") and item:GetAttribute("Level188Tv") == true
+				and tonumber(item:GetAttribute("HeldBy")) == player.UserId and item:GetAttribute("depositedAt") == nil then
+				return item
+			end
+		end
+	end
+	return nil
+end
+
 function Hub.ShouldDeliver()
+	local tv = heldTelevision()
+	if tv then
+		return true, math.max(0, tonumber(tv:GetAttribute("price")) or 0), tonumber(ReplicatedStorage:GetAttribute("CurrentLevelProfit")) or 0, tv
+	end
 	local inventory, items, capacity = Hub.InventoryState()
 	if not inventory or #items == 0 then
 		return false, 0, 0
@@ -1205,19 +1224,20 @@ local function deliveryStep()
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local shouldDeliver, deliveredValue, profitBefore, tv = Hub.ShouldDeliver()
 	if not root or not humanoid or humanoid.Health <= 0 or player:GetAttribute("Dead")
-		or player:GetAttribute("Dying") or player:GetAttribute("inventoryLocked")
+		or player:GetAttribute("Dying") or (player:GetAttribute("inventoryLocked") and not tv)
 		or player:GetAttribute("InLocker") or player:GetAttribute("Swinging") or player:GetAttribute("Throwing") then
 		return
 	end
-	local shouldDeliver, deliveredValue, profitBefore = Hub.ShouldDeliver()
 	if not shouldDeliver then
 		return
 	end
-	local entryTarget, _, triggers = roomDestination(root, humanoid)
+	local entryTarget, insideTarget, triggers = roomDestination(root, humanoid)
 	if not entryTarget then
 		return
 	end
+	if tv then entryTarget = insideTarget end
 	local job = {
 		Character = character, Root = root, Humanoid = humanoid,
 		Level = ReplicatedStorage:GetAttribute("LevelNumber"),
@@ -1234,6 +1254,7 @@ local function deliveryStep()
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
 		confirmed = deliveryWait(job, 5, function()
+			if tv then return tv:GetAttribute("depositedAt") ~= nil and player:GetAttribute("DraggingTv") ~= true end
 			local inventory, items = Hub.InventoryState()
 			return inventory ~= nil and #items == 0
 		end)
@@ -1268,7 +1289,7 @@ local function deliveryStep()
 		Hub.Notify("Auto Deliver", "Items delivered. Waiting in the room because Goal is unavailable.", "Warning")
 	elseif not cancelled then
 		Hub.Controls.AutoDeliver:Set(false)
-		Hub.Notify("Auto Deliver", "Entered the room, but the inventory is still full. Auto Deliver is paused.", "Warning")
+		Hub.Notify("Auto Deliver", tv and "The television deposit was not confirmed. Auto Deliver is paused." or "Entered the room, but the inventory is still full. Auto Deliver is paused.", "Warning")
 		if not ok then
 			warn("[TheBackrooms] Auto Deliver: " .. tostring(failure))
 		end
@@ -1590,6 +1611,151 @@ local function farmRunFloor(root, monsters)
 	return true
 end
 
+function Hub.FarmTVs(root, monsters)
+	local result = {}
+	local container = itemsContainer()
+	if not container then return result end
+	for _, item in ipairs(container:GetChildren()) do
+		if item:IsA("Model") and item:GetAttribute("Level188Tv") == true
+			and item:GetAttribute("depositedAt") == nil and (tonumber(item:GetAttribute("HeldBy")) or 0) == 0
+			and os.clock() >= (Farm.Cooldowns[item] or 0) then
+			local prompt = item:FindFirstChild("DragPrompt", true)
+			local anchor = prompt and prompt.Parent
+			if prompt and prompt.Enabled and anchor and anchor:IsA("BasePart") then
+				if Hub.FarmDangerDistance(anchor.Position, monsters) >= 36 then
+					result[#result + 1] = {
+						Item = item, Anchor = anchor, Prompt = prompt,
+						Price = tonumber(item:GetAttribute("price")) or 0,
+						Distance = (root.Position - anchor.Position).Magnitude,
+					}
+				elseif not Farm.Avoided[item] then
+					Farm.Avoided[item], Farm.Stats.Skipped = true, Farm.Stats.Skipped + 1
+				end
+			end
+		end
+	end
+	table.sort(result, function(a, b)
+		if a.Price ~= b.Price then return a.Price > b.Price end
+		return a.Distance < b.Distance
+	end)
+	return result
+end
+
+local function farmTVDeliveryTarget(root, humanoid, monsters)
+	local _, inside = roomDestination(root, humanoid)
+	if inside and Hub.FarmDangerDistance(inside.Position, monsters) >= 30 then return inside end
+	return nil
+end
+
+local function farmTVFloor(root, humanoid, monsters)
+	if ReplicatedStorage:GetAttribute("LevelVariant") ~= "Level188-SpecialLevel" then return false end
+	local player = Players.LocalPlayer
+	local now = os.clock()
+	local job = Farm.Job
+	if job and job.TV then
+		local tv = job.TV
+		if not tv.Parent then Farm.Job = nil; return true end
+		local deposited = tv:GetAttribute("depositedAt") ~= nil
+		local held = tonumber(tv:GetAttribute("HeldBy")) == player.UserId
+		if deposited and job.Stage ~= "TVConfirm" then
+			job.Stage, job.Expires = "TVConfirm", now + 3
+		end
+		if job.Stage == "TVPickup" then
+			if held and player:GetAttribute("DraggingTv") == true then
+				Farm.Stats.Collected += 1
+				job.Stage, job.Expires = "TVCarry", now + 8
+			elseif now >= job.Expires then
+				Farm.Cooldowns[tv], Farm.Job = now + 10, nil
+			elseif not job.Fired and now >= job.FireAt then
+				if not job.Prompt.Parent or not job.Prompt.Enabled
+					or Hub.FarmDangerDistance(job.Anchor.Position, monsters) < 36
+					or (root.Position - job.Anchor.Position).Magnitude > job.Prompt.MaxActivationDistance then
+					Farm.Cooldowns[tv], Farm.Job = now + 10, nil
+					return true
+				end
+				job.Fired = true
+				local ok, failure = pcall(fireproximityprompt, job.Prompt, job.Prompt.HoldDuration)
+				if not ok then error(failure) end
+			end
+		elseif job.Stage == "TVCarry" then
+			if not held and player:GetAttribute("DraggingTv") ~= true then
+				Farm.Cooldowns[tv], Farm.Job = now + 8, nil
+				return true
+			end
+			local target = farmTVDeliveryTarget(root, humanoid, monsters)
+			if target then
+				farmTeleport(root, target)
+				job.Stage, job.Expires = "TVDeliver", now + 6
+				Farm.Status = "Delivering television"
+			else
+				Farm.Status = "Waiting for safe TV delivery"
+			end
+		elseif job.Stage == "TVDeliver" then
+			if now >= job.Expires then
+				Hub.Controls.FarmEnabled:Set(false)
+				Farm.Status = "Paused: television transport failed"
+			end
+		elseif job.Stage == "TVConfirm" then
+			local profit = tonumber(ReplicatedStorage:GetAttribute("CurrentLevelProfit")) or 0
+			if deposited and profit > job.Profit then
+				Farm.Stats.Delivered += 1
+				Farm.Stats.Value += math.min(job.Price, profit - job.Profit)
+				Farm.Job, Farm.NextAction = nil, now + 0.2
+			elseif now >= job.Expires then
+				Hub.Controls.FarmEnabled:Set(false)
+				Farm.Status = "Paused: television deposit was not confirmed"
+				Hub.Notify("Auto Farm", "The television deposit was not confirmed. Auto Farm is paused.", "Warning")
+			end
+		end
+		return true
+	end
+	local container = itemsContainer()
+	if container and player:GetAttribute("DraggingTv") == true then
+		for _, tv in ipairs(container:GetChildren()) do
+			if tv:GetAttribute("Level188Tv") and tonumber(tv:GetAttribute("HeldBy")) == player.UserId then
+				Farm.Job = {
+					Stage = "TVCarry", TV = tv, Price = tonumber(tv:GetAttribute("price")) or 0,
+					Profit = tonumber(ReplicatedStorage:GetAttribute("CurrentLevelProfit")) or 0,
+				}
+				return true
+			end
+		end
+		Farm.Status = "Waiting for television"
+		return true
+	end
+	if Hub.GoalMet() == true then return false end
+	if Hub.FarmDangerDistance(root.Position, monsters) < 24 and now >= Farm.NextEscape then
+		local safe = farmSafeRoom(root, humanoid, monsters)
+		if safe then
+			farmTeleport(root, safe)
+			Farm.Stats.Escapes += 1
+			Farm.Status, Farm.NextAction, Farm.NextEscape = "Escaping monster", now + 0.6, now + 2
+			return true
+		end
+	end
+	for _, candidate in ipairs(Hub.FarmTVs(root, monsters)) do
+		local collider = candidate.Item:FindFirstChild("Collider")
+		local front = collider and candidate.Anchor.Position - collider.Position or candidate.Anchor.CFrame.LookVector
+		front = Vector3.new(front.X, 0, front.Z)
+		front = front.Magnitude > 0.01 and front.Unit or Vector3.new(1, 0, 0)
+		local point = candidate.Anchor.Position + front * 3
+		local target = farmStandingTarget(point, root, humanoid, monsters, math.max(2, candidate.Prompt.MaxActivationDistance - 3.2))
+		if target and (target.Position - candidate.Anchor.Position).Magnitude < candidate.Prompt.MaxActivationDistance - 0.2 then
+			Farm.Job = {
+				Stage = "TVPickup", TV = candidate.Item, Anchor = candidate.Anchor, Prompt = candidate.Prompt,
+				Price = candidate.Price, Profit = tonumber(ReplicatedStorage:GetAttribute("CurrentLevelProfit")) or 0,
+				FireAt = now + 0.3, Expires = now + 3,
+			}
+			Farm.Status = "Collecting television"
+			farmTeleport(root, target)
+			return true
+		end
+		Farm.Cooldowns[candidate.Item] = now + 8
+	end
+	Farm.Status, Farm.NextAction = "Waiting for safe televisions", now + 1
+	return true
+end
+
 function Hub.AutoFarmStep()
 	if not Hub.Running or not Farm.Enabled then return end
 	local player = Players.LocalPlayer
@@ -1617,7 +1783,8 @@ function Hub.AutoFarmStep()
 		Farm.Status = "Waiting for floor transition"
 		return
 	end
-	if not playerCanMove(humanoid) or player:GetAttribute("inventoryLocked") or player:GetAttribute("Swinging") or player:GetAttribute("Throwing") then
+	local draggingTV = ReplicatedStorage:GetAttribute("LevelVariant") == "Level188-SpecialLevel" and player:GetAttribute("DraggingTv") == true
+	if not playerCanMove(humanoid) or (player:GetAttribute("inventoryLocked") and not draggingTV) or player:GetAttribute("Swinging") or player:GetAttribute("Throwing") then
 		Farm.Status = "Waiting for player"
 		return
 	end
@@ -1627,6 +1794,7 @@ function Hub.AutoFarmStep()
 	if not inventory then Farm.Status = "Waiting for inventory"; return end
 	local monsters = Hub.FarmMonsters()
 	if farmRunFloor(root, monsters) then return end
+	if farmTVFloor(root, humanoid, monsters) then return end
 	local job = Farm.Job
 	if job and job.Stage == "Pickup" then
 		local acquired = false
