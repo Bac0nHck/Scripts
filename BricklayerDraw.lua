@@ -169,7 +169,6 @@ local gui = neu("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, playerGui)
 
--- This frame measures the area below Roblox controls and inside phone cutouts.
 local bildschirm = neu("Frame", {
 	Name = "SafeArea",
 	Size = UDim2.fromScale(1, 1),
@@ -184,7 +183,6 @@ local fenster = neu("Frame", {
 	BorderSizePixel = 0,
 	Active = true,
 }, bildschirm)
--- Only used as a fallback for exceptionally small viewports.
 local skalierung = neu("UIScale", {Scale = 1}, fenster)
 
 local kopf = neu("Frame", {
@@ -220,6 +218,12 @@ local function knopf(name, text, farbe, eltern)
 end
 
 local schliessen = knopf("Close", "X", Color3.fromRGB(150, 50, 50), kopf)
+local oeffnen = knopf("OpenMenu", "CP", Color3.fromRGB(200, 110, 30), bildschirm)
+oeffnen.Size = UDim2.fromOffset(52, 52)
+oeffnen.Visible = false
+oeffnen.Active = true
+oeffnen.ZIndex = 10
+oeffnen:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0.5, 0)
 local leinwand = neu("Frame", {
 	Name = "Canvas",
 	BackgroundColor3 = Color3.fromRGB(44, 44, 52),
@@ -246,7 +250,6 @@ local eingabe = neu("TextBox", {
 neu("UICorner", {CornerRadius = UDim.new(0, 6)}, eingabe)
 local drucken = knopf("PrintText", "Print Text", Color3.fromRGB(200, 110, 30), fenster)
 
--- Points are stored in 0..1 canvas coordinates, independent of screen size.
 local seitenlaenge = 320
 local function punkt(p)
 	neu("Frame", {
@@ -281,8 +284,18 @@ local function neuZeichnen()
 end
 
 local zeichnenInput, ziehenInput, aktiverStrich, letzter, ziehStart, fensterStart
+local knopfInput, knopfZiehStart, knopfPositionStart, knopfLetzteEingabe
+local knopfGezogen = false
 local function eingabeBeenden()
 	zeichnenInput, ziehenInput, aktiverStrich, letzter = nil, nil, nil, nil
+	knopfInput = nil
+end
+
+local function eingabeAbbrechen()
+	if knopfInput then
+		knopfGezogen = true
+	end
+	eingabeBeenden()
 end
 
 local rand = 8
@@ -296,18 +309,27 @@ local function positionSetzen(x, y)
 	)
 end
 
+local function knopfPositionSetzen(x, y)
+	local groesse = bildschirm.AbsoluteSize
+	oeffnen.Position = UDim2.fromOffset(
+		math.clamp(x, rand, math.max(rand, groesse.X - oeffnen.Size.X.Offset - rand)),
+		math.clamp(y, rand, math.max(rand, groesse.Y - oeffnen.Size.Y.Offset - rand))
+	)
+end
+
 local function rechteck(objekt, x, y, b, h)
 	objekt.Position = UDim2.fromOffset(x, y)
 	objekt.Size = UDim2.fromOffset(b, h)
 end
 
 local erstesLayout = true
+local erstesKnopfLayout = true
 local function layout()
 	local groesse = bildschirm.AbsoluteSize
 	if groesse.X <= rand * 2 or groesse.Y <= rand * 2 then
 		return
 	end
-	eingabeBeenden()
+	eingabeAbbrechen()
 	local maxB, maxH = groesse.X - rand * 2, groesse.Y - rand * 2
 	local faktor = math.min(1, maxB / 280, maxH / 260)
 	skalierung.Scale = faktor
@@ -359,6 +381,14 @@ local function layout()
 	else
 		positionSetzen(fenster.Position.X.Offset, fenster.Position.Y.Offset)
 	end
+	local knopfGroesse = math.min(52, groesse.X - rand * 2, groesse.Y - rand * 2)
+	oeffnen.Size = UDim2.fromOffset(knopfGroesse, knopfGroesse)
+	if erstesKnopfLayout then
+		erstesKnopfLayout = false
+		knopfPositionSetzen(16, (groesse.Y - knopfGroesse) / 2)
+	else
+		knopfPositionSetzen(oeffnen.Position.X.Offset, oeffnen.Position.Y.Offset)
+	end
 	neuZeichnen()
 end
 
@@ -392,7 +422,7 @@ local function verbinden(signal, funktion)
 end
 
 verbinden(leinwand.InputBegan, function(input)
-	if not istEingabe(input) or zeichnenInput or ziehenInput then
+	if not fenster.Visible or not istEingabe(input) or zeichnenInput or ziehenInput or knopfInput then
 		return
 	end
 	if leinwand.AbsoluteSize.X <= 0 or leinwand.AbsoluteSize.Y <= 0 then
@@ -406,7 +436,7 @@ verbinden(leinwand.InputBegan, function(input)
 end)
 
 verbinden(kopf.InputBegan, function(input)
-	if istEingabe(input) and not zeichnenInput and not ziehenInput
+	if fenster.Visible and istEingabe(input) and not zeichnenInput and not ziehenInput and not knopfInput
 		and input.Position.X < schliessen.AbsolutePosition.X then
 		ziehenInput = input
 		ziehStart = input.Position
@@ -414,10 +444,20 @@ verbinden(kopf.InputBegan, function(input)
 	end
 end)
 
+verbinden(oeffnen.InputBegan, function(input)
+	if not oeffnen.Visible or not istEingabe(input) or zeichnenInput or ziehenInput or knopfInput then
+		return
+	end
+	knopfInput, knopfLetzteEingabe = input, input
+	knopfGezogen = false
+	knopfZiehStart = input.Position
+	knopfPositionStart = oeffnen.Position
+end)
+
 verbinden(UserInputService.InputChanged, function(input)
 	if input.UserInputState == Enum.UserInputState.Cancel then
-		if gleichesEnde(input, zeichnenInput) or gleichesEnde(input, ziehenInput) then
-			eingabeBeenden()
+		if gleichesEnde(input, zeichnenInput) or gleichesEnde(input, ziehenInput) or gleichesEnde(input, knopfInput) then
+			eingabeAbbrechen()
 		end
 		return
 	end
@@ -431,15 +471,25 @@ verbinden(UserInputService.InputChanged, function(input)
 	elseif ziehenInput and gleicheBewegung(input, ziehenInput) then
 		local d = input.Position - ziehStart
 		positionSetzen(fensterStart.X.Offset + d.X, fensterStart.Y.Offset + d.Y)
+	elseif knopfInput and gleicheBewegung(input, knopfInput) then
+		local d = input.Position - knopfZiehStart
+		if d.Magnitude > 6 then
+			knopfGezogen = true
+		end
+		if knopfGezogen then
+			knopfPositionSetzen(knopfPositionStart.X.Offset + d.X, knopfPositionStart.Y.Offset + d.Y)
+		end
 	end
 end)
 
 verbinden(UserInputService.InputEnded, function(input)
 	if gleichesEnde(input, zeichnenInput) or gleichesEnde(input, ziehenInput) then
 		eingabeBeenden()
+	elseif gleichesEnde(input, knopfInput) then
+		knopfInput = nil
 	end
 end)
-verbinden(UserInputService.WindowFocusReleased, eingabeBeenden)
+verbinden(UserInputService.WindowFocusReleased, eingabeAbbrechen)
 verbinden(bildschirm:GetPropertyChangedSignal("AbsoluteSize"), layout)
 verbinden(UserInputService:GetPropertyChangedSignal("TouchEnabled"), layout)
 
@@ -474,8 +524,32 @@ verbinden(drucken.Activated, function()
 	end)
 end)
 
+local function menueAnzeigen(zeigen)
+	eingabeBeenden()
+	fenster.Visible = zeigen
+	oeffnen.Visible = not zeigen
+	if not zeigen then
+		eingabe:ReleaseFocus()
+	end
+end
+
 verbinden(schliessen.Activated, function()
-	gui:Destroy()
+	menueAnzeigen(false)
+end)
+
+verbinden(oeffnen.Activated, function(input)
+	if not oeffnen.Visible then
+		return
+	end
+	if not input or istEingabe(input) then
+		if knopfGezogen then
+			return
+		end
+		if input and knopfLetzteEingabe and not gleichesEnde(input, knopfLetzteEingabe) then
+			return
+		end
+	end
+	menueAnzeigen(true)
 end)
 
 verbinden(gui.Destroying, function()
