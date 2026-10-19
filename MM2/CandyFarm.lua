@@ -228,21 +228,45 @@ local function enumName(value)
 end
 
 local function isDisconnect(name)
-    return type(name) == "string" and name:sub(1, 10) == "Disconnect"
-        and name ~= "DisconnectClientRequest" and name ~= "DisconnectRejoin"
+    return type(name) == "string" and (name == "ServerShutdown"
+        or (name:sub(1, 10) == "Disconnect" and name ~= "DisconnectClientRequest" and name ~= "DisconnectRejoin"))
 end
 
 local disconnectCodes
+local function connectionErrorName(value)
+    if value == nil then return nil end
+    -- GetErrorCode normally returns an EnumItem, but some executors expose a number.
+    local named, name = pcall(function() return value.Name end)
+    if named and type(name) == "string" then return name end
+    local number = tonumber(value)
+    if not number then
+        local valued, numberValue = pcall(function() return value.Value end)
+        if valued then number = tonumber(numberValue) end
+    end
+    if not number then return enumName(value) end
+    if not disconnectCodes then
+        -- Keep shutdown and intentional-leave classification available when Enum inspection is restricted.
+        local codes = {[288] = "ServerShutdown", [276] = "DisconnectRejoin", [285] = "DisconnectClientRequest"}
+        pcall(function()
+            for _, item in ipairs(Enum.ConnectionError:GetEnumItems()) do codes[item.Value] = item.Name end
+        end)
+        disconnectCodes = codes
+    end
+    return disconnectCodes[number]
+end
+
 function App:DisconnectReason()
     local ok, code = pcall(function() return GuiService:GetErrorCode() end)
-    if ok and code ~= nil then
-        local name = enumName(code)
-        return isDisconnect(name) and name or nil
-    end
-    local typed, kind = pcall(function() return GuiService:GetErrorType() end)
-    if typed and kind ~= nil then
-        local name = enumName(kind)
-        return isDisconnect(name) and name or nil
+    local name = ok and connectionErrorName(code) or nil
+    if isDisconnect(name) then return name end
+    if name == "DisconnectClientRequest" or name == "DisconnectRejoin" then return nil end
+    -- A valid non-disconnect code may be stale; still inspect the visible error prompt.
+    -- Only use the broad error category when the specific-code API is unavailable.
+    if not ok or code == nil then
+        local typed, kind = pcall(function() return GuiService:GetErrorType() end)
+        local kindName = typed and connectionErrorName(kind) or nil
+        if isDisconnect(kindName) then return kindName end
+        if kindName == "DisconnectClientRequest" or kindName == "DisconnectRejoin" then return nil end
     end
     local readable, reason = pcall(function()
         local gui = CoreGui:FindFirstChild("RobloxPromptGui")
@@ -252,15 +276,8 @@ function App:DisconnectReason()
         local message = pathChild(prompt, "MessageArea", "ErrorFrame", "ErrorMessage")
         local suffix = message and tostring(message.Text):match("%(([^()]*)%)%s*$")
         local number = suffix and tonumber(suffix:match("(%d+)%s*$"))
-        if not number then return end
-        if not disconnectCodes then
-            local codes = {}
-            for _, item in ipairs(Enum.ConnectionError:GetEnumItems()) do
-                if isDisconnect(item.Name) then codes[item.Value] = item.Name end
-            end
-            disconnectCodes = codes
-        end
-        return disconnectCodes[number]
+        local promptName = number and connectionErrorName(number)
+        return isDisconnect(promptName) and promptName or nil
     end)
     return readable and reason or nil
 end
@@ -348,13 +365,31 @@ end
 if not profileOK then Profile = nil end
 
 function App:GetMap()
+    -- CurrentMap is authoritative even before the round's coins have spawned.
     for _, map in ipairs(CollectionService:GetTagged("CurrentMap")) do
-        if map:IsDescendantOf(workspace) and map:FindFirstChild("CoinContainer") then return map end
+        if map:IsA("Model") and map.Name ~= "Lobby" and map:IsDescendantOf(workspace) then return map end
     end
     for _, map in ipairs(workspace:GetChildren()) do
-        if map:IsA("Model") and map.Name ~= "Lobby" and map:FindFirstChild("CoinContainer") then return map end
+        if map:IsA("Model") and map.Name ~= "Lobby" and map:FindFirstChild("CoinContainer", true) then return map end
     end
     return nil
+end
+
+function App:ScanCoins()
+    local coins, seen = {}, {}
+    local function add(coin)
+        if coin and not seen[coin] then
+            seen[coin] = true
+            if self:CoinVisual(coin) then coins[#coins + 1] = coin end
+        end
+    end
+    for _, coin in ipairs(CollectionService:GetTagged("ServerCoinPart")) do add(coin) end
+    for _, visual in ipairs(CollectionService:GetTagged("CoinVisual")) do add(visual.Parent) end
+    if self.Map and self.Map:IsDescendantOf(workspace) then
+        -- Mode-specific layouts may nest or omit CoinContainer and ServerCoinPart.
+        for _, coin in ipairs(self.Map:QueryDescendants('BasePart[$CoinID = "Candy"]')) do add(coin) end
+    end
+    self.Coins = coins
 end
 
 function App:GetCharacter()
@@ -362,6 +397,14 @@ function App:GetCharacter()
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local root = character and character:FindFirstChild("HumanoidRootPart")
     return character, humanoid, root
+end
+
+function App:IsRoundParticipantAlive(entry)
+    if not entry or type(entry.Role) ~= "string" or entry.Dead == true or entry.Killed == true then return false end
+    local alive = Player:GetAttribute("Alive")
+    -- Infection uses Survivor/Zombie roles; optional flags need not be present.
+    if entry.Role == "Survivor" or entry.Role == "Zombie" then return alive ~= false end
+    return entry.Dead == false and alive == true
 end
 
 function App:RoundState()
@@ -374,9 +417,7 @@ function App:RoundState()
         return false, "Waiting for an active round"
     end
     local entry = RoundData.PlayerData and RoundData.PlayerData[Player.Name]
-    if self.RoundBlocked or not self.Map or not self.Map.Parent or not entry
-        or type(entry.Role) ~= "string" or entry.Dead ~= false or entry.Killed == true
-        or Player:GetAttribute("Alive") ~= true then
+    if self.RoundBlocked or not self.Map or not self.Map.Parent or not self:IsRoundParticipantAlive(entry) then
         return false, "Waiting for an active round"
     end
     if self.BoundsMap ~= self.Map then
@@ -687,6 +728,7 @@ end
 function App:PhysicsTick()
     if not self.Running then return end
     self:UpdateAntiFling()
+    if self:StepEndRoundRecovery() then return end
     self:GuardLocalFling()
     if not self.Settings.FarmEnabled or not self.FlightCharacter or os.clock() < self.PauseUntil then return end
     local active, _, character, humanoid, root = self:MovementState()
@@ -881,19 +923,104 @@ function App:ObserveEndRound(cycle)
     return cycle.Confirmed == true
 end
 
+local function restoreEndRound(attempt, label, action)
+    local ok, err = pcall(action)
+    if not ok then
+        attempt.CleanupErrors = attempt.CleanupErrors or {}
+        table.insert(attempt.CleanupErrors, label .. ": " .. tostring(err))
+    end
+end
+
+local function placeEndRoundCharacter(character, root, pose)
+    local pivot = character.PrimaryPart ~= root and root.CFrame:ToObjectSpace(character:GetPivot())
+    root.CFrame = pose
+    if character.PrimaryPart == root then
+        character:SetPrimaryPartCFrame(pose)
+    else
+        character:PivotTo(pose * pivot)
+    end
+end
+
+function App:RestoreEndRoundPose(attempt)
+    local character, humanoid, root = attempt.Character, attempt.Humanoid, attempt.Root
+    local alive = Player.Character == character and root:IsDescendantOf(character) and humanoid:IsDescendantOf(character)
+        and humanoid.Health > 0
+    if alive then
+        restoreEndRound(attempt, "position", function()
+            placeEndRoundCharacter(character, root, attempt.ReturnCFrame)
+        end)
+    end
+    local ok, parts = pcall(function() return character:QueryDescendants("BasePart") end)
+    if ok then
+        for _, part in ipairs(parts) do
+            restoreEndRound(attempt, "linear_velocity", function() part.AssemblyLinearVelocity = Vector3.zero end)
+            restoreEndRound(attempt, "angular_velocity", function() part.AssemblyAngularVelocity = Vector3.zero end)
+        end
+    elseif root:IsDescendantOf(character) then
+        restoreEndRound(attempt, "root_linear_velocity", function() root.AssemblyLinearVelocity = Vector3.zero end)
+        restoreEndRound(attempt, "root_angular_velocity", function() root.AssemblyAngularVelocity = Vector3.zero end)
+    end
+    if alive then restoreEndRound(attempt, "getting_up", function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+    return alive
+end
+
+function App:StepEndRoundRecovery()
+    local recovery = self.EndRoundRecovery
+    if not recovery then return false end
+    if not self.Running or self.Unloading or Player.Character ~= recovery.Attempt.Character
+        or self.Map ~= recovery.Attempt.Map or self.RoundSerial ~= recovery.Attempt.Serial
+        or self.Flow.Phase ~= "Confirming" or self.Flow.Owner ~= "EndRound" then
+        self.EndRoundRecovery = nil; return false
+    end
+    local alive = self:RestoreEndRoundPose(recovery.Attempt)
+    recovery.Remaining = recovery.Remaining - 1
+    if not alive or recovery.Remaining <= 0 then self.EndRoundRecovery = nil end
+    return alive
+end
+
 function App:StopEndRound(reason)
     local attempt = self.EndRoundAttempt
-    if not attempt then return end
-    self.EndRoundAttempt = nil
+    if not attempt then self.EndRoundRecovery = nil; return end
+    self.EndRoundAttempt, self.EndRoundRecovery = nil, nil
+    -- Restore process-wide state before reports or flow transitions can fail.
+    restoreEndRound(attempt, "velocity_controller_force", function()
+        if attempt.VelocityController then attempt.VelocityController.MaxForce = Vector3.zero end
+    end)
+    restoreEndRound(attempt, "velocity_controller_speed", function()
+        if attempt.VelocityController then attempt.VelocityController.Velocity = Vector3.zero end
+    end)
+    restoreEndRound(attempt, "velocity_controller", function()
+        if attempt.VelocityController then attempt.VelocityController:Destroy() end
+    end)
+    restoreEndRound(attempt, "kill_plane", function()
+        if attempt.FallenHeightSaved then workspace.FallenPartsDestroyHeight = attempt.FallenHeight end
+    end)
+    restoreEndRound(attempt, "seated", function()
+        if attempt.SeatedSaved and attempt.Humanoid.Parent then
+            attempt.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, attempt.SeatedEnabled)
+        end
+    end)
+    restoreEndRound(attempt, "camera", function()
+        local camera = attempt.Camera
+        if attempt.CameraSaved and camera and camera.Parent then
+            local currentHumanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+            local subject = attempt.CameraSubject
+            camera.CameraSubject = subject and subject.Parent and subject or currentHumanoid
+        end
+    end)
+    for part, saved in pairs(attempt.Parts) do
+        restoreEndRound(attempt, "collision", function() if part.Parent then part.CanCollide = saved.CanCollide end end)
+        restoreEndRound(attempt, "collision_group", function() if part.Parent then part.CollisionGroup = saved.CollisionGroup end end)
+    end
+    local recover = attempt.SetupStarted and self:RestoreEndRoundPose(attempt)
     local now, cycle = os.clock(), self.EndRoundCycle
     self.EndRoundResult = reason
     self.LastEndRoundAttempt = {Reason = reason, PhysicsSteps = attempt.PhysicsSteps or 0,
         Duration = attempt.SpinStarted and now - attempt.SpinStarted or 0,
         ClosestDistance = attempt.ClosestDistance, ContactPart = attempt.ContactPart and attempt.ContactPart.Name,
-        CollisionGroupVerified = attempt.CollisionGroupVerified, ContactObserved = attempt.ContactObserved == true,
-        ProximityObserved = attempt.ProximityObserved == true, MaxTargetSpeed = attempt.MaxTargetSpeed or 0,
-        MaxTargetDisplacement = attempt.MaxTargetDisplacement or 0, MaxStrengthLevel = attempt.MaxStrengthLevel or 0,
-        ContactFace = attempt.ContactFace, ContactPenetration = attempt.ContactPenetration, Index = attempt.Index}
+        ContactObserved = attempt.ContactObserved == true, ProximityObserved = attempt.ProximityObserved == true,
+        MaxTargetSpeed = attempt.MaxTargetSpeed or 0, MaxTargetDisplacement = attempt.MaxTargetDisplacement or 0,
+        SampleIndex = attempt.SampleIndex, Index = attempt.Index, CleanupErrors = attempt.CleanupErrors}
     self.EndRoundRetryAt = now + 4
     if cycle then
         cycle.ConfirmUntil = self.EndRoundRetryAt
@@ -902,25 +1029,16 @@ function App:StopEndRound(reason)
         self.LastEndRoundReport = table.clone(cycle)
     end
     self:CancelMove()
-    for part, saved in pairs(attempt.Parts) do
-        if part.Parent then pcall(function() part.CanCollide, part.CollisionGroup = saved.CanCollide, saved.CollisionGroup end) end
-    end
-    if attempt.Root.Parent then attempt.Root.AssemblyLinearVelocity, attempt.Root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero end
     self.Expected, self.AntiFlingStable = nil, nil
     self:Transition("Confirming", reason)
     self:UpdateAntiFling()
+    -- The source repeats the return for five frames. Keep signal handlers non-yielding.
+    if recover and self.Running and not self.Unloading then self.EndRoundRecovery = {Attempt = attempt, Remaining = 4} end
 end
 
-function App:FlingCollider(character)
-    for _, name in ipairs({"UpperTorso", "Torso", "LowerTorso", "HumanoidRootPart", "Head"}) do
-        local part = character:FindFirstChild(name)
-        if part and part:IsA("BasePart") and part.CanCollide and not part.Anchored then
-            local ok, collidable = pcall(function()
-                return game:GetService("PhysicsService"):CollisionGroupsAreCollidable("Default", part.CollisionGroup)
-            end)
-            if not ok or collidable then return part, ok end
-        end
-    end
+function App:FlingContactPart(character, root)
+    local head = character:FindFirstChild("Head")
+    return head and head:IsA("BasePart") and (head.Position - root.Position).Magnitude > 5 and head or root
 end
 
 function App:PauseForCorrection()
@@ -935,32 +1053,35 @@ function App:PauseForCorrection()
     end
 end
 
-local ContactSeconds, ContactDwell = 1.8, 0.06
-local ContactLinear, ContactSpin = {140, 220, 320}, {2200, 3800, 6000}
+local ContactSeconds = 2
 
 function App:ApplyEndRoundPhysics(simulationStep)
     local attempt, cycle, flow = self.EndRoundAttempt, self.EndRoundCycle, self.Flow
     if not attempt or not simulationStep then return end
     local now = os.clock()
-    local target, character, _, targetRoot = self:FindMurderer()
+    local target, character, targetHumanoid, targetRoot = self:FindMurderer()
     if not cycle or flow.Phase ~= "Contact" or flow.Owner ~= "EndRound" or attempt.FlowEpoch ~= flow.Epoch
         or not self.Settings.AutoEndRound or not self.Settings.FarmEnabled
         or (not self.BagFull and not self:DeathEndRoundState()) or not self:RoundOngoing()
         or attempt.Serial ~= self.RoundSerial or attempt.Map ~= self.Map or Player.Character ~= attempt.Character
-        or target ~= attempt.Player or character ~= attempt.TargetCharacter or targetRoot ~= attempt.TargetRoot then
+        or target ~= attempt.Player or character ~= attempt.TargetCharacter or targetRoot ~= attempt.TargetRoot
+        or targetHumanoid ~= attempt.TargetHumanoid or not attempt.Humanoid.Parent or attempt.Humanoid.Health <= 0
+        or attempt.Humanoid:GetState() == Enum.HumanoidStateType.Dead or attempt.Humanoid.Sit
+        or not attempt.Root:IsDescendantOf(attempt.Character) or attempt.Root.Anchored or targetHumanoid.Sit then
         self:StopEndRound("Contact context changed"); return
     end
     if now >= attempt.Deadline then self:StopEndRound("Contact window elapsed"); return end
     if not finiteFrame(attempt.Root.CFrame) or not finiteFrame(targetRoot.CFrame) then self:StopEndRound("Invalid transform"); return end
-    local collider, verified = self:FlingCollider(character)
-    if not collider or not finiteFrame(collider.CFrame) then self:StopEndRound("No valid target collider"); return end
-    local velocity = targetRoot.AssemblyLinearVelocity or Vector3.zero
+    local collider = attempt.TargetPart
+    if not collider.Parent or not collider:IsDescendantOf(character) or collider.Anchored or not finiteFrame(collider.CFrame) then
+        self:StopEndRound("No valid target contact part"); return
+    end
+    local velocity = collider.Velocity
     local speed = velocity.Magnitude
     if speed ~= speed or speed == math.huge then self:StopEndRound("Invalid target velocity"); return end
     attempt.MaxTargetSpeed = math.max(attempt.MaxTargetSpeed or speed, speed)
     attempt.MaxTargetDisplacement = math.max(attempt.MaxTargetDisplacement or 0, (targetRoot.Position - attempt.InitialTargetPosition).Magnitude)
-    if attempt.SpinStarted and (speed >= math.max(220, attempt.InitialSpeed + 120)
-        or (speed >= 100 and attempt.MaxTargetDisplacement >= 12)) then
+    if attempt.SpinStarted and speed > 500 then
         cycle.MotionObserved = true
         self:StopEndRound("Target motion observed; awaiting server confirmation"); return
     end
@@ -974,58 +1095,75 @@ function App:ApplyEndRoundPhysics(simulationStep)
             part.CollisionGroup, part.CanCollide = "Default", true
         else part.CanCollide = false end
     end
-    local own = self:FlingCollider(attempt.Character)
-    if not own or not finiteFrame(own.CFrame) then self:StopEndRound("No valid local collider"); return end
     if not attempt.SpinStarted then
-        attempt.SpinStarted, attempt.Deadline = now, math.min(attempt.HardDeadline, now + ContactSeconds)
+        attempt.Camera = workspace.CurrentCamera
+        attempt.CameraSubject = attempt.Camera and attempt.Camera.CameraSubject
+        attempt.CameraSaved = true
+        attempt.FallenHeight = workspace.FallenPartsDestroyHeight
+        attempt.FallenHeightSaved = true
+        attempt.SeatedEnabled = attempt.Humanoid:GetStateEnabled(Enum.HumanoidStateType.Seated)
+        attempt.SeatedSaved, attempt.SetupStarted = true, true
+        if attempt.Camera then
+            local head = character:FindFirstChild("Head")
+            attempt.Camera.CameraSubject = head or targetHumanoid
+        end
+        workspace.FallenPartsDestroyHeight = 0 / 0
+        attempt.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        local controller = Instance.new("BodyVelocity")
+        attempt.VelocityController = controller
+        controller.Name = "TeleportFlingTemporaryVelocity"
+        controller.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        controller.Velocity = Vector3.new(9e8, 9e8, 9e8)
+        controller.Parent = attempt.Root
+        attempt.SpinStarted, attempt.Deadline = now, now + ContactSeconds
         cycle.Attempts = cycle.Attempts + 1
         attempt.Index = cycle.Attempts
         self.EndRoundTries = (self.EndRoundTries or 0) + 1
     end
-    local elapsed = now - attempt.SpinStarted
-    local ownSize, targetSize = own.Size or Vector3.new(2, 2, 1), collider.Size or Vector3.new(2, 2, 1)
-    local observedDistance = (own.Position - collider.Position).Magnitude
+    local observedDistance = (attempt.Root.Position - collider.Position).Magnitude
     attempt.ClosestDistance = math.min(attempt.ClosestDistance or math.huge, observedDistance)
-    local overlapRadius = math.clamp((ownSize.Magnitude + targetSize.Magnitude) * 0.5, 1, 8)
+    local overlapRadius = math.clamp((attempt.Root.Size.Magnitude + collider.Size.Magnitude) * 0.5, 1, 8)
     attempt.ProximityObserved = attempt.ProximityObserved or observedDistance <= overlapRadius
-    local ok, touching = pcall(function() return own:GetTouchingParts() end)
+    local ok, touching = pcall(function() return attempt.Root:GetTouchingParts() end)
     if ok then
         for _, part in ipairs(touching) do
             if part:IsDescendantOf(character) then attempt.ContactObserved = true; break end
         end
     end
-    local level = 1
-    if attempt.ContactObserved or attempt.ProximityObserved then level = math.clamp(1 + math.floor(elapsed / 0.6), 1, 3) end
-    local sample = math.floor(elapsed / ContactDwell) % 6 + 1
-    local supportX, supportY, supportZ = (ownSize.X + targetSize.X) * 0.5,
-        (ownSize.Y + targetSize.Y) * 0.5, (ownSize.Z + targetSize.Z) * 0.5
-    local overlap = math.min(0.25, supportY * 0.25)
-    local y = math.clamp(supportY - overlap, 0.05, 3)
-    local marginX = math.max(0, supportX - math.min(0.25, supportX * 0.25))
-    local marginZ = math.max(0, supportZ - math.min(0.25, supportZ * 0.25))
-    local x, z = math.min(marginX * 0.2, 0.35), math.min(marginZ * 0.2, 0.35)
-    local offsets = {Vector3.new(0, -y, 0), Vector3.new(x, -y, 0), Vector3.new(x, -y, z),
-        Vector3.new(0, -y, z), Vector3.new(-x, -y, z), Vector3.new(-x, -y, 0)}
-    local rotation = collider.CFrame.Rotation
-    local localVelocity = (rotation:Inverse() * CFrame.new(velocity)).Position
-    local lead = Vector3.new(localVelocity.X, 0, localVelocity.Z) * 0.035
-    if lead.Magnitude > 1.25 then lead = lead.Unit * 1.25 end
-    local offsetAt = offsets[sample]
-    local contactOffset = Vector3.new(math.clamp(offsetAt.X + lead.X, -marginX, marginX), -y,
-        math.clamp(offsetAt.Z + lead.Z, -marginZ, marginZ))
-    local desired = collider.CFrame * CFrame.new(contactOffset)
-    local relative = attempt.Root.CFrame:ToObjectSpace(own.CFrame)
-    local goal = desired * relative:Inverse()
+    local sample = (attempt.SampleIndex or 0) + 1
+    if not attempt.Offsets or sample > #attempt.Offsets then
+        sample = 1
+        attempt.Rotations = nil
+        if speed < 50 then
+            attempt.Angle = (attempt.Angle or 0) + 100
+            local lead = targetHumanoid.MoveDirection * speed / 1.25
+            attempt.Offsets = {
+                CFrame.new(0, 1.5, 0) + lead, CFrame.new(0, -1.5, 0) + lead,
+                CFrame.new(2.25, 1.5, -2.25) + lead, CFrame.new(-2.25, -1.5, 2.25) + lead,
+                CFrame.new(0, 1.5, 0) + targetHumanoid.MoveDirection,
+                CFrame.new(0, -1.5, 0) + targetHumanoid.MoveDirection,
+            }
+        else
+            local walk = targetHumanoid.WalkSpeed
+            local reach = targetRoot.Velocity.Magnitude / 1.25
+            attempt.Offsets = {
+                CFrame.new(0, 1.5, walk), CFrame.new(0, -1.5, -walk),
+                CFrame.new(0, 1.5, walk), CFrame.new(0, 1.5, reach),
+                CFrame.new(0, -1.5, -reach), CFrame.new(0, 1.5, reach),
+                CFrame.new(0, -1.5, 0), CFrame.new(0, -1.5, 0),
+                CFrame.new(0, -1.5, 0), CFrame.new(0, -1.5, 0),
+            }
+            attempt.Rotations = {90, 0, 90, 90, 0, 90, 90, 0, -90, 0}
+        end
+    end
+    local pitch = math.rad(attempt.Rotations and attempt.Rotations[sample] or attempt.Angle)
+    local goal = CFrame.new(collider.Position) * attempt.Offsets[sample] * CFrame.Angles(pitch, 0, 0)
     if not finiteFrame(goal) then self:StopEndRound("Invalid contact pose"); return end
-    attempt.Root.CFrame = goal
-    local launch = (rotation * CFrame.new(0, 1, 0)).Position
-    local inherited = speed > 80 and velocity.Unit * 80 or velocity
-    attempt.Root.AssemblyLinearVelocity = launch * ContactLinear[level] + inherited + Vector3.new(0, 15, 0)
-    attempt.Root.AssemblyAngularVelocity = Vector3.new(ContactSpin[level], ContactSpin[level], ContactSpin[level])
+    placeEndRoundCharacter(attempt.Character, attempt.Root, goal)
+    attempt.Root.Velocity = Vector3.new(9e7, 9e8, 9e7)
+    attempt.Root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
     attempt.PhysicsSteps = attempt.PhysicsSteps + 1
-    attempt.ContactPart, attempt.OwnContactPart, attempt.SampleIndex, attempt.CollisionGroupVerified = collider, own, sample, verified
-    attempt.ContactFace, attempt.ContactPenetration = "Below", supportY - y
-    attempt.MaxStrengthLevel = math.max(attempt.MaxStrengthLevel or 0, level)
+    attempt.ContactPart, attempt.OwnContactPart, attempt.SampleIndex = collider, attempt.Root, sample
     self.Expected = nil
 end
 
@@ -1036,13 +1174,14 @@ function App:TryEndRound(character, root)
     end
     local now, cycle = os.clock(), self.EndRoundCycle
     local prefix = self.DeathEndRoundContext and "After death: " or "Bag full: "
+    if self.EndRoundRecovery then self.Status = prefix .. "restoring position"; return true end
     if cycle and self:ObserveEndRound(cycle) then
         self:StopEndRound("Server confirmed murderer death")
         self:Transition("Confirming", "TargetDead")
         self:Park(root, 0, prefix .. "murderer death confirmed; waiting for round end")
         return true
     end
-    local target, targetCharacter, _, targetRoot = self:FindMurderer()
+    local target, targetCharacter, targetHumanoid, targetRoot = self:FindMurderer()
     if cycle and (cycle.Serial ~= self.RoundSerial or cycle.Map ~= self.Map
         or (target and (target ~= cycle.Player or targetCharacter ~= cycle.TargetCharacter))) then
         self:CancelEndRoundSequence("Target context changed"); cycle = nil
@@ -1064,11 +1203,13 @@ function App:TryEndRound(character, root)
         elseif now >= attempt.Deadline then self:StopEndRound("Contact window elapsed")
         else self.Status = prefix .. "flinging murderer"; return true end
     end
+    if self.EndRoundRecovery then self.Status = prefix .. "restoring position"; return true end
     if now < cycle.ConfirmUntil then
         self:Transition("Confirming", "Waiting for server result")
         self:Park(root, 0, prefix .. "waiting for murderer death in safe zone"); return true
     end
-    if not finiteFrame(targetRoot.CFrame) then
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Sit or root.Anchored or targetHumanoid.Sit or not finiteFrame(targetRoot.CFrame) then
         self:Transition("Confirming", "Invalid target")
         self:Park(root, 0, prefix .. "waiting for a valid murderer"); return true
     end
@@ -1081,8 +1222,10 @@ function App:TryEndRound(character, root)
     end
     self:Transition("Contact", "Auto End Round")
     local attempt = {Player = target, TargetCharacter = targetCharacter, TargetRoot = targetRoot,
-        Character = character, Root = root, Map = self.Map, Serial = self.RoundSerial, FlowEpoch = self.Flow.Epoch,
-        Parts = {}, CreatedAt = now, HardDeadline = now + 2.2, Deadline = now + 2.2, PhysicsSteps = 0,
+        TargetHumanoid = targetHumanoid, TargetPart = self:FlingContactPart(targetCharacter, targetRoot),
+        Character = character, Humanoid = humanoid, Root = root, ReturnCFrame = root.CFrame,
+        Map = self.Map, Serial = self.RoundSerial, FlowEpoch = self.Flow.Epoch,
+        Parts = {}, CleanupErrors = {}, CreatedAt = now, HardDeadline = now + 2.2, Deadline = now + 2.2, PhysicsSteps = 0,
         InitialTargetPosition = targetRoot.Position, InitialSpeed = targetSpeed}
     self.EndRoundAttempt, self.AntiFlingStable = attempt, nil
     self:UpdateAntiFling()
@@ -1175,10 +1318,7 @@ function App:StepCandy(dt, root)
     if self.ManualPark then self:Park(root, dt, "Safe zone: resume farm to continue"); return end
     if now >= self.NextScan then
         self.NextScan = now + 0.75
-        self.Coins = CollectionService:GetTagged("ServerCoinPart")
-        if #self.Coins == 0 and self.Map then
-            self.Coins = self.Map.CoinContainer:QueryDescendants("BasePart")
-        end
+        self:ScanCoins()
     end
     local target = self.Target
     if target and not self:CoinVisual(target) then
