@@ -73,7 +73,7 @@ end
 local Defaults = {
     FarmEnabled = false, AutoReset = false, AutoEndRound = false, AntiAFK = true, AntiFling = true, AutoReconnect = true,
     MenuKeybind = "RightControl",
-    TravelSpeed = 18, UnderfloorDepth = 6,
+    TravelSpeed = 55, TravelSpeedPresetVersion = 1, UnderfloorDepth = 6,
     TouchAssist = true,
     WebhookEnabled = false, WebhookURL = "", WebhookInterval = 10, WebhookOnFull = true,
 }
@@ -113,6 +113,7 @@ function App:Transition(phase, reason)
     if flow.Phase == phase then flow.Reason = reason; return end
     local owner = phase == "Farming" and "Farm"
         or ((phase == "Contact" or phase == "Confirming" or phase == "EndReady") and "EndRound") or nil
+    if owner ~= "Farm" then self.HarvestPause = nil end
     if flow.Owner ~= owner or phase == "Contact" or flow.Phase == "Farming" then
         self:CancelMove()
         self:ResetPickup()
@@ -162,7 +163,7 @@ local function sanitize(data)
     for k, default in pairs(Defaults) do
         if type(data) == "table" and type(data[k]) == type(default) then settings[k] = data[k] end
     end
-    settings.TravelSpeed = finite(settings.TravelSpeed, 18, 10, 35)
+    settings.TravelSpeed = finite(settings.TravelSpeed, 55, 10, 100)
     settings.UnderfloorDepth = finite(settings.UnderfloorDepth, 6, 2, 6)
     settings.WebhookInterval = finite(settings.WebhookInterval, 10, 1, 60)
     local validKey, key = pcall(function() return Enum.KeyCode[settings.MenuKeybind] end)
@@ -217,10 +218,18 @@ function App:LoadState()
         if ok and type(data) == "table" and tostring(data.UserId) == AccountId
             and type(data.Settings) == "table" then saved = data.Settings end
     end
+    local speedPresetVersion = type(saved) == "table" and saved.TravelSpeedPresetVersion
+    local migrateSpeed = type(speedPresetVersion) ~= "number" or speedPresetVersion ~= speedPresetVersion
+        or speedPresetVersion < 1 or speedPresetVersion == math.huge
     self.Settings = sanitize(saved)
+    if migrateSpeed then
+        self.Settings.TravelSpeed = 55
+        self.Settings.TravelSpeedPresetVersion = 1
+    end
     self.RestoredState = type(saved) == "table"
     self.StateLoaded = true
     self:RememberState()
+    if migrateSpeed then self:SaveState() end
 end
 
 local function enumName(value)
@@ -235,7 +244,6 @@ end
 local disconnectCodes
 local function connectionErrorName(value)
     if value == nil then return nil end
-    -- GetErrorCode normally returns an EnumItem, but some executors expose a number.
     local named, name = pcall(function() return value.Name end)
     if named and type(name) == "string" then return name end
     local number = tonumber(value)
@@ -245,7 +253,6 @@ local function connectionErrorName(value)
     end
     if not number then return enumName(value) end
     if not disconnectCodes then
-        -- Keep shutdown and intentional-leave classification available when Enum inspection is restricted.
         local codes = {[288] = "ServerShutdown", [276] = "DisconnectRejoin", [285] = "DisconnectClientRequest"}
         pcall(function()
             for _, item in ipairs(Enum.ConnectionError:GetEnumItems()) do codes[item.Value] = item.Name end
@@ -260,8 +267,6 @@ function App:DisconnectReason()
     local name = ok and connectionErrorName(code) or nil
     if isDisconnect(name) then return name end
     if name == "DisconnectClientRequest" or name == "DisconnectRejoin" then return nil end
-    -- A valid non-disconnect code may be stale; still inspect the visible error prompt.
-    -- Only use the broad error category when the specific-code API is unavailable.
     if not ok or code == nil then
         local typed, kind = pcall(function() return GuiService:GetErrorType() end)
         local kindName = typed and connectionErrorName(kind) or nil
@@ -365,7 +370,6 @@ end
 if not profileOK then Profile = nil end
 
 function App:GetMap()
-    -- CurrentMap is authoritative even before the round's coins have spawned.
     for _, map in ipairs(CollectionService:GetTagged("CurrentMap")) do
         if map:IsA("Model") and map.Name ~= "Lobby" and map:IsDescendantOf(workspace) then return map end
     end
@@ -386,7 +390,6 @@ function App:ScanCoins()
     for _, coin in ipairs(CollectionService:GetTagged("ServerCoinPart")) do add(coin) end
     for _, visual in ipairs(CollectionService:GetTagged("CoinVisual")) do add(visual.Parent) end
     if self.Map and self.Map:IsDescendantOf(workspace) then
-        -- Mode-specific layouts may nest or omit CoinContainer and ServerCoinPart.
         for _, coin in ipairs(self.Map:QueryDescendants('BasePart[$CoinID = "Candy"]')) do add(coin) end
     end
     self.Coins = coins
@@ -402,7 +405,6 @@ end
 function App:IsRoundParticipantAlive(entry)
     if not entry or type(entry.Role) ~= "string" or entry.Dead == true or entry.Killed == true then return false end
     local alive = Player:GetAttribute("Alive")
-    -- Infection uses Survivor/Zombie roles; optional flags need not be present.
     if entry.Role == "Survivor" or entry.Role == "Zombie" then return alive ~= false end
     return entry.Dead == false and alive == true
 end
@@ -576,6 +578,54 @@ function App:ResetPickup()
     self.ArrivedAt, self.NextTouchAt, self.TouchAttempts, self.TouchSent = nil, 0, 0, false
 end
 
+function App:CalculateHarvestDelay(distance, speed)
+    distance = tonumber(distance)
+    if not distance or distance ~= distance or math.abs(distance) == math.huge then return 2.5 end
+    speed = finite(speed or self.Settings.TravelSpeed, 55, 10, 100)
+    return math.clamp(0.2 + math.max(0, distance) / speed, 0.35, 2.5)
+end
+
+function App:UpdateHarvestPause(pause, root, force)
+    local now = os.clock()
+    if not force and now < (pause.NextPlanAt or 0) and pause.Speed == self.Settings.TravelSpeed
+        and pause.Depth == self.Settings.UnderfloorDepth and pause.TouchAssist == self.Settings.TouchAssist
+        and (not pause.NextCoin or self:CoinVisual(pause.NextCoin)) then return end
+    local route = self:PlanCoinRoute(root, pause.PickupCoin)
+    local candidate = route[1]
+    pause.NextCoin = candidate and candidate.Coin
+    pause.Distance = candidate and (candidate.Position - pause.Position).Magnitude or 0
+    pause.Duration = self:CalculateHarvestDelay(pause.Distance)
+    pause.Until, pause.NextPlanAt = pause.StartedAt + pause.Duration, now + 0.15
+    pause.Speed, pause.Depth, pause.TouchAssist = self.Settings.TravelSpeed, self.Settings.UnderfloorDepth, self.Settings.TouchAssist
+end
+
+function App:BeginHarvestPause()
+    if not self.Running or self.Unloading or not self.Settings.FarmEnabled or self.BagFull
+        or self.Flow.Phase ~= "Farming" then return end
+    local active, _, character, _, root = self:RoundState()
+    if not active then return end
+    local now, pause = os.clock(), self.HarvestPause
+    if pause and pause.Root == root and pause.Map == self.Map and pause.Serial == self.RoundSerial
+        and now < pause.Until then
+        pause.StartedAt = now
+        self:ScanCoins()
+        self:UpdateHarvestPause(pause, root, true)
+        return
+    end
+    local pickupCoin = self.ArrivedAt and (self.TouchSent or not self.Settings.TouchAssist) and self.Target or nil
+    self:CancelMove()
+    self:ResetPickup()
+    self.Target, self.WaitingPosition = nil, nil
+    pause = {StartedAt = now, Position = root.Position, Root = root, PickupCoin = pickupCoin,
+        Character = character, Map = self.Map, Serial = self.RoundSerial}
+    self.HarvestPause = pause
+    self:ScanCoins()
+    self:UpdateHarvestPause(pause, root, true)
+    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+    self.Expected = root.Position
+    self.Status = "Candy collected: waiting before next flight"
+end
+
 function App:CancelMove()
     local motion = self.Motion
     self.Motion = nil
@@ -605,6 +655,7 @@ function App:DisableTouchAssist(reason)
 end
 
 function App:ReleaseFlight(restorePosition)
+    self.HarvestPause = nil
     self:StopEndRound("Movement stopped")
     self:CancelMove()
     self:ResetPickup()
@@ -630,7 +681,6 @@ end
 
 function App:PrepareFlight(character, humanoid, root)
     if self.EndRoundAttempt and self.EndRoundAttempt.Character == character and self.FlightCharacter == character then
-        humanoid.AutoRotate, humanoid.PlatformStand = false, true
         return
     end
     if self.FlightCharacter ~= character then
@@ -733,8 +783,8 @@ function App:PhysicsTick()
     if not self.Settings.FarmEnabled or not self.FlightCharacter or os.clock() < self.PauseUntil then return end
     local active, _, character, humanoid, root = self:MovementState()
     if active and character == self.FlightCharacter then
+        if self.EndRoundAttempt then return end
         self:PrepareFlight(character, humanoid, root)
-        self:ApplyEndRoundPhysics(true)
     else
         self.Target = nil
         self:ReleaseFlight(false)
@@ -786,6 +836,7 @@ function App:SafePoint()
 end
 
 function App:Park(root, dt, status)
+    self.HarvestPause = nil
     self:StopEndRound("Safe zone")
     self:CancelMove()
     self:ResetPickup()
@@ -878,16 +929,96 @@ function App:EndRound()
     self:Transition("WaitingRound", "Round ended")
 end
 
-function App:PickCoin(root)
-    local best, bestDistance
-    local now = os.clock()
-    for _, coin in ipairs(self.Coins) do
-        if self:CoinVisual(coin) and (self.Cooldowns[coin] or 0) <= now then
-            local distance = (coin.Position - root.Position).Magnitude
-            if not bestDistance or distance < bestDistance then best, bestDistance = coin, distance end
+local RouteCandidateLimit, RoutePasses, RouteEpsilon = 32, 2, 0.0001
+
+function App:CoinDestination(coin)
+    return self.Settings.TouchAssist
+        and coin.Position - Vector3.new(0, self.Settings.UnderfloorDepth, 0) or coin.Position
+end
+
+function App:PlanCoinRoute(root, excludedCoin)
+    local candidates, seen = {}, {}
+    local now, origin = os.clock(), root.Position
+    for order, coin in ipairs(self.Coins) do
+        if not seen[coin] then
+            seen[coin] = true
+            if coin ~= excludedCoin and self:CoinVisual(coin) and (self.Cooldowns[coin] or 0) <= now then
+                local position = self:CoinDestination(coin)
+                local distance = (position - origin).Magnitude
+                if distance == distance and distance < math.huge
+                    and (#candidates < RouteCandidateLimit or distance < candidates[#candidates].StartDistance) then
+                    local insertAt = #candidates + 1
+                    while insertAt > 1 and distance < candidates[insertAt - 1].StartDistance do insertAt = insertAt - 1 end
+                    table.insert(candidates, insertAt, {Coin = coin, Position = position, StartDistance = distance, Order = order})
+                    if #candidates > RouteCandidateLimit then table.remove(candidates) end
+                end
+            end
         end
     end
-    return best
+    local route, used, distances = {}, {}, {}
+    for index, candidate in ipairs(candidates) do
+        candidate.RouteIndex = index
+        distances[index] = {[index] = 0}
+    end
+    for first = 1, #candidates - 1 do
+        for last = first + 1, #candidates do
+            local distance = (candidates[first].Position - candidates[last].Position).Magnitude
+            distances[first][last], distances[last][first] = distance, distance
+        end
+    end
+    local function distance(first, last)
+        return first and distances[first.RouteIndex][last.RouteIndex] or last.StartDistance
+    end
+    local previous, greedyLength = nil, 0
+    for _ = 1, #candidates do
+        local best, bestDistance
+        for _, candidate in ipairs(candidates) do
+            if not used[candidate] then
+                local cost = distance(previous, candidate)
+                if not bestDistance or cost < bestDistance or (cost == bestDistance and candidate.Order < best.Order) then
+                    best, bestDistance = candidate, cost
+                end
+            end
+        end
+        route[#route + 1], used[best] = best, true
+        greedyLength, previous = greedyLength + bestDistance, best
+    end
+    local nearestDistance = candidates[1] and candidates[1].StartDistance
+    local firstLimit, swaps = nearestDistance and nearestDistance * 1.25 or 0, 0
+    for _ = 1, RoutePasses do
+        local improved = false
+        for first = 1, #route - 1 do
+            for last = first + 1, #route do
+                if first > 1 or route[last].StartDistance <= firstLimit + RouteEpsilon then
+                    local before, after = route[first - 1], route[last + 1]
+                    local oldCost = distance(before, route[first]) + (after and distance(route[last], after) or 0)
+                    local newCost = distance(before, route[last]) + (after and distance(route[first], after) or 0)
+                    if newCost + RouteEpsilon < oldCost then
+                        local left, right = first, last
+                        while left < right do
+                            route[left], route[right] = route[right], route[left]
+                            left, right = left + 1, right - 1
+                        end
+                        swaps, improved = swaps + 1, true
+                    end
+                end
+            end
+        end
+        if not improved then break end
+    end
+    local length = 0
+    previous = nil
+    for _, candidate in ipairs(route) do
+        length, previous = length + distance(previous, candidate), candidate
+    end
+    self.LastCoinRoute = {Candidates = #route, GreedyLength = greedyLength, Length = length,
+        FirstDistance = route[1] and route[1].StartDistance, NearestDistance = nearestDistance, Swaps = swaps}
+    return route
+end
+
+function App:PickCoin(root)
+    local route = self:PlanCoinRoute(root)
+    return route[1] and route[1].Coin
 end
 
 function App:FindMurderer()
@@ -932,11 +1063,10 @@ local function restoreEndRound(attempt, label, action)
 end
 
 local function placeEndRoundCharacter(character, root, pose)
-    local pivot = character.PrimaryPart ~= root and root.CFrame:ToObjectSpace(character:GetPivot())
-    root.CFrame = pose
     if character.PrimaryPart == root then
         character:SetPrimaryPartCFrame(pose)
     else
+        local pivot = root.CFrame:ToObjectSpace(character:GetPivot())
         character:PivotTo(pose * pivot)
     end
 end
@@ -982,7 +1112,6 @@ function App:StopEndRound(reason)
     local attempt = self.EndRoundAttempt
     if not attempt then self.EndRoundRecovery = nil; return end
     self.EndRoundAttempt, self.EndRoundRecovery = nil, nil
-    -- Restore process-wide state before reports or flow transitions can fail.
     restoreEndRound(attempt, "velocity_controller_force", function()
         if attempt.VelocityController then attempt.VelocityController.MaxForce = Vector3.zero end
     end)
@@ -999,6 +1128,12 @@ function App:StopEndRound(reason)
         if attempt.SeatedSaved and attempt.Humanoid.Parent then
             attempt.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, attempt.SeatedEnabled)
         end
+    end)
+    restoreEndRound(attempt, "auto_rotate", function()
+        if attempt.PostureSaved and attempt.Humanoid.Parent then attempt.Humanoid.AutoRotate = attempt.AutoRotate end
+    end)
+    restoreEndRound(attempt, "platform_stand", function()
+        if attempt.PostureSaved and attempt.Humanoid.Parent then attempt.Humanoid.PlatformStand = attempt.PlatformStand end
     end)
     restoreEndRound(attempt, "camera", function()
         local camera = attempt.Camera
@@ -1018,6 +1153,7 @@ function App:StopEndRound(reason)
     self.LastEndRoundAttempt = {Reason = reason, PhysicsSteps = attempt.PhysicsSteps or 0,
         Duration = attempt.SpinStarted and now - attempt.SpinStarted or 0,
         ClosestDistance = attempt.ClosestDistance, ContactPart = attempt.ContactPart and attempt.ContactPart.Name,
+        PrePhysicsDistance = attempt.PrePhysicsDistance,
         ContactObserved = attempt.ContactObserved == true, ProximityObserved = attempt.ProximityObserved == true,
         MaxTargetSpeed = attempt.MaxTargetSpeed or 0, MaxTargetDisplacement = attempt.MaxTargetDisplacement or 0,
         SampleIndex = attempt.SampleIndex, Index = attempt.Index, CleanupErrors = attempt.CleanupErrors}
@@ -1032,7 +1168,6 @@ function App:StopEndRound(reason)
     self.Expected, self.AntiFlingStable = nil, nil
     self:Transition("Confirming", reason)
     self:UpdateAntiFling()
-    -- The source repeats the return for five frames. Keep signal handlers non-yielding.
     if recover and self.Running and not self.Unloading then self.EndRoundRecovery = {Attempt = attempt, Remaining = 4} end
 end
 
@@ -1055,9 +1190,9 @@ end
 
 local ContactSeconds = 2
 
-function App:ApplyEndRoundPhysics(simulationStep)
+function App:ApplyEndRoundPhysics(simulationStep, expectedAttempt)
     local attempt, cycle, flow = self.EndRoundAttempt, self.EndRoundCycle, self.Flow
-    if not attempt or not simulationStep then return end
+    if not attempt or not simulationStep or (expectedAttempt and expectedAttempt ~= attempt) then return end
     local now = os.clock()
     local target, character, targetHumanoid, targetRoot = self:FindMurderer()
     if not cycle or flow.Phase ~= "Contact" or flow.Owner ~= "EndRound" or attempt.FlowEpoch ~= flow.Epoch
@@ -1070,7 +1205,6 @@ function App:ApplyEndRoundPhysics(simulationStep)
         or not attempt.Root:IsDescendantOf(attempt.Character) or attempt.Root.Anchored or targetHumanoid.Sit then
         self:StopEndRound("Contact context changed"); return
     end
-    if now >= attempt.Deadline then self:StopEndRound("Contact window elapsed"); return end
     if not finiteFrame(attempt.Root.CFrame) or not finiteFrame(targetRoot.CFrame) then self:StopEndRound("Invalid transform"); return end
     local collider = attempt.TargetPart
     if not collider.Parent or not collider:IsDescendantOf(character) or collider.Anchored or not finiteFrame(collider.CFrame) then
@@ -1081,21 +1215,24 @@ function App:ApplyEndRoundPhysics(simulationStep)
     if speed ~= speed or speed == math.huge then self:StopEndRound("Invalid target velocity"); return end
     attempt.MaxTargetSpeed = math.max(attempt.MaxTargetSpeed or speed, speed)
     attempt.MaxTargetDisplacement = math.max(attempt.MaxTargetDisplacement or 0, (targetRoot.Position - attempt.InitialTargetPosition).Magnitude)
-    if attempt.SpinStarted and speed > 500 then
-        cycle.MotionObserved = true
-        self:StopEndRound("Target motion observed; awaiting server confirmation"); return
+    if attempt.BatchFinished then
+        attempt.BatchFinished = false
+        if speed > 500 then
+            cycle.MotionObserved = true
+            self:StopEndRound("Target motion observed; awaiting server confirmation"); return
+        end
     end
+    if now >= attempt.Deadline then self:StopEndRound("Contact window elapsed"); return end
     local offset = targetRoot.Position - self.BoundsFrame.Position
     if math.abs(offset.X) > self.BoundsSize.X / 2 + 40 or math.abs(offset.Z) > self.BoundsSize.Z / 2 + 40
         or math.abs(offset.Y) > self.BoundsSize.Y / 2 + 100 then self:StopEndRound("Target outside map"); return end
-    for _, part in ipairs(attempt.Character:QueryDescendants("BasePart")) do
-        if self.Collision[part] == nil then self.Collision[part] = part.CanCollide end
-        if part == attempt.Root or part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "LowerTorso" then
-            if not attempt.Parts[part] then attempt.Parts[part] = {CanCollide = part.CanCollide, CollisionGroup = part.CollisionGroup} end
-            part.CollisionGroup, part.CanCollide = "Default", true
-        else part.CanCollide = false end
-    end
     if not attempt.SpinStarted then
+        attempt.AutoRotate, attempt.PlatformStand = attempt.Humanoid.AutoRotate, attempt.Humanoid.PlatformStand
+        attempt.PostureSaved = true
+        self:RestoreCollision()
+        if self.SavedAutoRotate ~= nil then attempt.Humanoid.AutoRotate = self.SavedAutoRotate end
+        attempt.Humanoid.PlatformStand = self.SavedPlatformStand == true
+        if not attempt.Humanoid.PlatformStand then attempt.Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
         attempt.Camera = workspace.CurrentCamera
         attempt.CameraSubject = attempt.Camera and attempt.Camera.CameraSubject
         attempt.CameraSaved = true
@@ -1121,7 +1258,7 @@ function App:ApplyEndRoundPhysics(simulationStep)
         self.EndRoundTries = (self.EndRoundTries or 0) + 1
     end
     local observedDistance = (attempt.Root.Position - collider.Position).Magnitude
-    attempt.ClosestDistance = math.min(attempt.ClosestDistance or math.huge, observedDistance)
+    attempt.PrePhysicsDistance = math.min(attempt.PrePhysicsDistance or math.huge, observedDistance)
     local overlapRadius = math.clamp((attempt.Root.Size.Magnitude + collider.Size.Magnitude) * 0.5, 1, 8)
     attempt.ProximityObserved = attempt.ProximityObserved or observedDistance <= overlapRadius
     local ok, touching = pcall(function() return attempt.Root:GetTouchingParts() end)
@@ -1160,11 +1297,40 @@ function App:ApplyEndRoundPhysics(simulationStep)
     local goal = CFrame.new(collider.Position) * attempt.Offsets[sample] * CFrame.Angles(pitch, 0, 0)
     if not finiteFrame(goal) then self:StopEndRound("Invalid contact pose"); return end
     placeEndRoundCharacter(attempt.Character, attempt.Root, goal)
+    local placedDistance = (attempt.Root.Position - collider.Position).Magnitude
+    attempt.ClosestDistance = math.min(attempt.ClosestDistance or math.huge, placedDistance)
     attempt.Root.Velocity = Vector3.new(9e7, 9e8, 9e7)
     attempt.Root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
     attempt.PhysicsSteps = attempt.PhysicsSteps + 1
     attempt.ContactPart, attempt.OwnContactPart, attempt.SampleIndex = collider, attempt.Root, sample
+    attempt.BatchFinished = sample == #attempt.Offsets
     self.Expected = nil
+end
+
+function App:RunEndRoundWorker(attempt)
+    if self.EndRoundAttempt ~= attempt or attempt.WorkerStarted then return end
+    attempt.WorkerStarted = true
+    attempt.Worker = task.spawn(function()
+        local ok, err = xpcall(function()
+            while self.Running and self.EndRoundAttempt == attempt do
+                self:ApplyEndRoundPhysics(true, attempt)
+                if self.EndRoundAttempt ~= attempt then break end
+                task.wait()
+            end
+        end, function(failure) return tostring(failure) end)
+        if not ok then
+            attempt.Error = tostring(err)
+            if self.EndRoundAttempt == attempt then
+                self.LastError = tostring(err)
+                self:StopEndRound("Fling error")
+                self:SetFarm(false)
+                self:Notify("Farm stopped", "Fling error; details are in the executor console.", "Warning")
+                warn("[MM2 Candy] Fling: " .. tostring(err))
+            end
+        elseif self.EndRoundAttempt == attempt then
+            self:StopEndRound("Fling cancelled")
+        end
+    end)
 end
 
 function App:TryEndRound(character, root)
@@ -1230,6 +1396,7 @@ function App:TryEndRound(character, root)
     self.EndRoundAttempt, self.AntiFlingStable = attempt, nil
     self:UpdateAntiFling()
     self.Status = prefix .. "preparing contact"
+    self:RunEndRoundWorker(attempt)
     return true
 end
 
@@ -1320,6 +1487,28 @@ function App:StepCandy(dt, root)
         self.NextScan = now + 0.75
         self:ScanCoins()
     end
+    local pause = self.HarvestPause
+    if pause then
+        if pause.Root ~= root or pause.Character ~= Player.Character or pause.Map ~= self.Map
+            or pause.Serial ~= self.RoundSerial then
+            self.HarvestPause, self.NextScan = nil, 0
+            self:CancelMove()
+        else
+            self:UpdateHarvestPause(pause, root)
+            if now >= pause.Until then
+                self:ScanCoins()
+                self.NextScan = now + 0.75
+                self:UpdateHarvestPause(pause, root, true)
+            end
+            if now < pause.Until then
+                self:Move(root, pause.Position)
+                self.Status = string.format("Collected: next flight in %.1fs", pause.Until - now)
+                return
+            end
+            self.HarvestPause = nil
+            self:CancelMove()
+        end
+    end
     local target = self.Target
     if target and not self:CoinVisual(target) then
         self:CancelMove()
@@ -1339,8 +1528,7 @@ function App:StepCandy(dt, root)
         return
     end
     self.WaitingPosition = nil
-    local position = self.Settings.TouchAssist
-        and target.Position - Vector3.new(0, self.Settings.UnderfloorDepth, 0) or target.Position
+    local position = self:CoinDestination(target)
     local distance = (position - root.Position).Magnitude
     if distance > 0.7 and self.ArrivedAt then self:ResetPickup() end
     if not self.BestDistance or distance < self.BestDistance - 1 then
@@ -1615,7 +1803,7 @@ local function buildInterface()
     live(farm, function() return App.Status end)
     live(farm, function() return "Bag: " .. App.BagCount .. " / " .. (App.BagCapacity or "?") .. (App.BagFull and "  FULL" or "") end)
     farm:CreateSection("Movement")
-    slider(farm, "TravelSpeed", "Tween Speed", 10, 35, " studs/s")
+    slider(farm, "TravelSpeed", "Tween Speed", 10, 100, " studs/s")
     slider(farm, "UnderfloorDepth", "Underfloor Depth", 2, 6, " studs")
     toggle(farm, "TouchAssist", "Touch Assist", "requires executor support")
     if not App.TouchSupported then App:DisableTouchAssist() end
@@ -1782,7 +1970,8 @@ local function start()
         App.AcknowledgedCount = count
         if type(capacity) == "number" and capacity > 0 and capacity < math.huge then App.BagCapacity = capacity end
         App.BagFull = App.BagCapacity ~= nil and count >= App.BagCapacity
-        if App.BagFull then App:RequestEndRound("Bag full acknowledged") end
+        if App.BagFull then App:RequestEndRound("Bag full acknowledged")
+        elseif previous ~= nil and count > previous then App:BeginHarvestPause() end
     end)
     on("CoinsStarted", function()
         App:CancelEndRoundSequence("New candies")
