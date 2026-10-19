@@ -111,7 +111,7 @@ end
 function App:Transition(phase, reason)
     local flow = self.Flow
     if flow.Phase == phase then flow.Reason = reason; return end
-    local owner = phase == "Farming" and "Farm"
+    local owner = phase == "Farming" and "Farm" or (phase == "Starting" and "Start")
         or ((phase == "Contact" or phase == "Confirming" or phase == "EndReady") and "EndRound") or nil
     if owner ~= "Farm" then self.HarvestPause = nil end
     if flow.Owner ~= owner or phase == "Contact" or flow.Phase == "Farming" then
@@ -294,6 +294,7 @@ end
 
 function App:QueueReconnect(reason)
     if not self.Running or self.Unloading or not self.Settings.AutoReconnect or self.ReconnectPending then return end
+    self.StartGuard = nil
     self.ReconnectPending = {Reason = reason, Attempts = 0, NextAt = os.clock() + 3, InFlight = false}
     self.ReconnectStatus = "Reconnecting in 3 seconds"
     self.Settings.WebhookURL = pendingWebhook(self) or self.Settings.WebhookURL
@@ -779,6 +780,7 @@ function App:PhysicsTick()
     if not self.Running then return end
     self:UpdateAntiFling()
     if self:StepEndRoundRecovery() then return end
+    if self:StepRoundStart(true) then return end
     self:GuardLocalFling()
     if not self.Settings.FarmEnabled or not self.FlightCharacter or os.clock() < self.PauseUntil then return end
     local active, _, character, humanoid, root = self:MovementState()
@@ -851,8 +853,72 @@ function App:Park(root, dt, status)
     self.WaitingPosition = nil
 end
 
+function App:RoundTimerStarted()
+    local timer = workspace:FindFirstChild("RoundTimerPart")
+    local remaining = timer and timer:GetAttribute("Time")
+    return type(remaining) == "number" and remaining > 0 and remaining < math.huge
+end
+
+function App:ArmRoundStart(excludedMap, entry)
+    if not self.Settings.FarmEnabled or self.ReconnectPending or self.Unloading
+        or (not excludedMap and self.StartCompletedMap == self.Map and self.Map ~= nil) then return end
+    local guard = not excludedMap and self.StartGuard or nil
+    guard = guard or {ExcludedMap = excludedMap}
+    if type(entry) == "table" then guard.Entry = entry end
+    self.StartGuard = guard
+end
+
+function App:StepRoundStart(holdOnly)
+    local guard = self.StartGuard
+    if not guard then return false end
+    if not self.Running or self.Unloading or not self.Settings.FarmEnabled or self.ReconnectPending
+        or self.BagFull or self.DeathEndRoundContext or self.EndRoundAttempt or self.EndRoundCycle
+        or os.clock() < self.PauseUntil then self.StartGuard = nil; return false end
+    local map = self.Map
+    if not map or map == guard.ExcludedMap or not map:IsDescendantOf(workspace) then return false end
+    local character, humanoid, root = self:GetCharacter()
+    local entry = RoundData.PlayerData and RoundData.PlayerData[Player.Name]
+    if self:IsRoundParticipantAlive(entry) then guard.Entry = nil else entry = guard.Entry or entry end
+    local role = entry and entry.Role
+    local participant = role == "Innocent" or role == "Sheriff" or role == "Hero" or role == "Murderer"
+        or role == "Survivor" or role == "Zombie"
+    if not participant or not self:IsRoundParticipantAlive(entry) or not character or not humanoid or not root
+        or not character:IsDescendantOf(workspace) or not humanoid:IsDescendantOf(character)
+        or not root:IsDescendantOf(character) or root.Anchored or humanoid.Health <= 0
+        or humanoid:GetState() == Enum.HumanoidStateType.Dead or not finiteFrame(root.CFrame)
+        or (guard.Character and (guard.Character ~= character or guard.Root ~= root or guard.Map ~= map)) then
+        if guard.Character then self.StartGuard = nil end
+        return false
+    end
+    guard.Character, guard.Root, guard.Map = character, root, map
+    self.DeathEligibleCharacter, self.DeathObservedRoundSerial = character, self.RoundSerial
+    self:Transition("Starting", "Round start protection")
+    self:PrepareFlight(character, humanoid, root)
+    if not holdOnly and self:RoundState() then
+        self:ScanCoins()
+        self.NextScan = os.clock() + 0.75
+        local coin = self:PickCoin(root)
+        if coin then
+            local position = self:CoinDestination(coin)
+            self:Transition("Farming", "First candy after round start")
+            self:CancelMove()
+            self:ResetPickup()
+            root.CFrame = CFrame.new(position) * root.CFrame.Rotation
+            root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+            self.Target, self.Expected, self.AntiFlingStable = coin, position, nil
+            self.ArrivedAt, self.ProgressAt, self.BestDistance = os.clock(), os.clock(), 0
+            self.StartGuard, self.StartCompletedMap = nil, map
+            self.LastStartTeleport = {Map = map, Serial = self.RoundSerial, Coin = coin, At = os.clock()}
+            return false
+        end
+    end
+    self:Park(root, 0, self:RoundTimerStarted() and "Safe zone: waiting for candies" or "Safe zone: waiting for round start")
+    return true
+end
+
 function App:SetFarm(enabled)
     enabled = enabled == true
+    self.StartGuard = nil
     if not enabled then self:CancelDeathEndRound(true) end
     self:CancelEndRoundSequence("Farm changed")
     self:CancelMove()
@@ -865,6 +931,8 @@ function App:SetFarm(enabled)
         self:ReleaseFlight(true)
         self.Status = "Disabled"
         self:Transition("Disabled", "Manual stop")
+    elseif self.Map and not self:RoundTimerStarted() then
+        self:ArmRoundStart()
     end
     if self.Controls.FarmEnabled and not self.Unloading then self.Controls.FarmEnabled:Set(enabled, true) end
 end
@@ -896,6 +964,7 @@ function App:Set(key, value)
 end
 
 function App:ResetRound()
+    self.StartGuard = nil
     self.AntiFlingStable = nil
     self:CancelDeathEndRound(false)
     self.DeathBootstrapAllowed, self.DeathObservedRoundSerial = false, nil
@@ -914,6 +983,7 @@ function App:ResetRound()
 end
 
 function App:EndRound()
+    self.StartGuard = nil
     if self.EndRoundCycle then
         if not self:ObserveEndRound(self.EndRoundCycle) then self.EndRoundCycle.Outcome = "RoundEnded" end
         self.LastEndRoundReport = table.clone(self.EndRoundCycle)
@@ -1177,6 +1247,7 @@ function App:FlingContactPart(character, root)
 end
 
 function App:PauseForCorrection()
+    self.StartGuard = nil
     self.Stats.Corrections = self.Stats.Corrections + 1
     self.PauseUntil, self.Target = os.clock() + 8, nil
     self:ReleaseFlight(false)
@@ -1412,9 +1483,14 @@ function App:Tick(dt)
         self.NextRound = now + 0.25
         local map = self:GetMap()
         if map ~= self.Map then
+            local startGuard = self.StartGuard
             self:ReleaseFlight(false)
             self.Map = map
             self:ResetRound()
+            if startGuard then
+                startGuard.Character, startGuard.Root, startGuard.Map = nil, nil, nil
+                self.StartGuard = startGuard
+            elseif map and not self:RoundTimerStarted() then self:ArmRoundStart() end
             self.Coins, self.NextScan = {}, 0
             if self.SafePlatform then cleanup(function() self.SafePlatform:Destroy() end); self.SafePlatform = nil end
             self.SafeCFrame, self.SafeMap = nil, nil
@@ -1422,6 +1498,7 @@ function App:Tick(dt)
     end
     if not self.Settings.FarmEnabled then self:Transition("Disabled", "Auto Farm off"); self.Status = "Disabled"; return end
     self.ActiveElapsed = self.ActiveElapsed + dt
+    if self:StepRoundStart(false) then return end
     if self.DeathEndRoundContext and not self:DeathEndRoundAllowed() then self:CancelDeathEndRound(false) end
     local active, reason, character, humanoid, root = self:MovementState()
     if not active then self:QueueDeathEndRound() end
@@ -1981,14 +2058,29 @@ local function start()
         App.Target, App.NextScan = nil, 0
     end)
     on("RoundStart", function(_, data)
+        local startGuard = App.StartGuard
         App:ResetRound()
         App.RoundBlocked = false
+        App.StartGuard = startGuard
+        if startGuard or not App:RoundTimerStarted() then
+            App:ArmRoundStart(nil, type(data) == "table" and data[Player.Name])
+        end
     end)
-    for _, name in ipairs({"GameOver", "LoadingMap", "RoundEndFade", "VictoryScreen"}) do on(name, function() App:EndRound() end) end
+    on("LoadingMap", function()
+        local outgoingMap = App.Map
+        App:EndRound()
+        App.StartCompletedMap = nil
+        App:ArmRoundStart(outgoingMap)
+    end)
+    for _, name in ipairs({"GameOver", "RoundEndFade", "VictoryScreen"}) do on(name, function() App:EndRound() end) end
     on("PlayerDataChanged", function(data)
         local entry = type(data) == "table" and data[Player.Name]
         if entry and (entry.Dead == true or entry.Killed == true) then App:QueueDeathEndRound(Player.Character, entry) end
         if not entry or entry.Dead or entry.Killed then
+            if App.StartGuard then
+                App.StartGuard.Entry = nil
+                if App.StartGuard.Character then App.StartGuard = nil end
+            end
             App.Target = nil
             if not App.DeathEndRoundContext then App:ReleaseFlight(false) end
         end
