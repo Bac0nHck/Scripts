@@ -406,7 +406,7 @@ end
 function App:IsRoundParticipantAlive(entry)
     if not entry or type(entry.Role) ~= "string" or entry.Dead == true or entry.Killed == true then return false end
     local alive = Player:GetAttribute("Alive")
-    if entry.Role == "Survivor" or entry.Role == "Zombie" then return alive ~= false end
+    if entry.Role == "Survivor" or entry.Role == "Zombie" then return entry.Dead == false or alive ~= false end
     return entry.Dead == false and alive == true
 end
 
@@ -2059,6 +2059,7 @@ local function start()
     end)
     on("RoundStart", function(_, data)
         local startGuard = App.StartGuard
+        if startGuard then startGuard.ExcludedMap = nil end
         App:ResetRound()
         App.RoundBlocked = false
         App.StartGuard = startGuard
