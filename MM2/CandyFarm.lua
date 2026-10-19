@@ -869,6 +869,7 @@ function App:ArmRoundStart(excludedMap, entry)
 end
 
 function App:OnRoundRoleSelected(role)
+    if type(role) == "table" then role = role.SelectedRole end
     if role ~= "Innocent" and role ~= "Sheriff" and role ~= "Hero" and role ~= "Murderer"
         and role ~= "Survivor" and role ~= "Zombie" then return end
     if not self.Running or self:RoundTimerStarted() then return end
@@ -2066,6 +2067,7 @@ local function start()
         App.Target, App.NextScan = nil, 0
     end)
     on("RoleSelect", function(role) App:OnRoundRoleSelected(role) end)
+    on("ShowRoleSelectNew", function(data) App:OnRoundRoleSelected(data) end)
     on("RoundStart", function(_, data)
         local startGuard = App.StartGuard
         if startGuard then startGuard.ExcludedMap = nil end
