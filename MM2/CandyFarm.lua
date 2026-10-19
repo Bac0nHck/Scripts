@@ -868,6 +868,14 @@ function App:ArmRoundStart(excludedMap, entry)
     self.StartGuard = guard
 end
 
+function App:OnRoundRoleSelected(role)
+    if role ~= "Innocent" and role ~= "Sheriff" and role ~= "Hero" and role ~= "Murderer"
+        and role ~= "Survivor" and role ~= "Zombie" then return end
+    if not self.Running or self:RoundTimerStarted() then return end
+    self:ArmRoundStart()
+    if self.StartGuard then self.StartGuard.ExcludedMap = nil end
+end
+
 function App:StepRoundStart(holdOnly)
     local guard = self.StartGuard
     if not guard then return false end
@@ -2057,6 +2065,7 @@ local function start()
         App.FullHandled, App.ResetRequested = false, false
         App.Target, App.NextScan = nil, 0
     end)
+    on("RoleSelect", function(role) App:OnRoundRoleSelected(role) end)
     on("RoundStart", function(_, data)
         local startGuard = App.StartGuard
         if startGuard then startGuard.ExcludedMap = nil end
