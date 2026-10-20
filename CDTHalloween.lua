@@ -148,11 +148,37 @@ function App:Spawn(callback)
     return thread
 end
 
-function App:Notify(title, text, kind)
-    if self.WindUI and self.Window and self.Running then
-        local icons = {Success = "check", Warning = "triangle-alert", Info = "info"}
-        pcall(self.WindUI.Notify, self.WindUI, {Title = title, Content = text, Icon = icons[kind] or "info", Duration = 4})
+function App:WithUI(callback, ...)
+    local bridge = type(syn) == "table" and syn
+    local getter = getthreadidentity or getidentity or get_thread_identity or bridge and bridge.get_thread_identity
+    local setter = setthreadidentity or setidentity or set_thread_identity or bridge and bridge.set_thread_identity
+    local original
+    if type(getter) == "function" then
+        local ok, value = pcall(getter)
+        if ok and type(value) == "number" then
+            original = value
+        end
     end
+    if type(setter) == "function" then
+        pcall(setter, 8)
+    end
+    local result = table.pack(pcall(callback, ...))
+    if original and type(setter) == "function" then
+        pcall(setter, original)
+    end
+    if not result[1] then
+        error(result[2], 0)
+    end
+    return table.unpack(result, 2, result.n)
+end
+
+function App:Notify(title, text, kind)
+    return self:WithUI(function()
+        if self.WindUI and self.Window and self.Running then
+            local icons = {Success = "check", Warning = "triangle-alert", Info = "info"}
+            pcall(self.WindUI.Notify, self.WindUI, {Title = title, Content = text, Icon = icons[kind] or "info", Duration = 4})
+        end
+    end)
 end
 
 function App:Copy(text)
@@ -395,12 +421,16 @@ function App:Unload()
     for _, trove in ipairs(self.Troves) do
         pcall(trove.Destroy, trove)
     end
-    if self.Window and not self.Window.Destroyed then
-        pcall(self.Window.Destroy, self.Window)
-    end
-    if self.CleanupLibrary then
-        self:CleanupLibrary()
-    end
+    pcall(function()
+        self:WithUI(function()
+            if self.Window and not self.Window.Destroyed then
+                pcall(self.Window.Destroy, self.Window)
+            end
+            if self.CleanupLibrary then
+                self:CleanupLibrary()
+            end
+        end)
+    end)
     if Environment[AppKey] == self then
         Environment[AppKey] = nil
     end
@@ -906,21 +936,23 @@ function App:RefreshRaceVehicles()
         local signature = table.concat(currentLabels, "\n")
         local control = self.Controls[key]
         if self[key .. "Signature"] ~= signature and control and control.Native then
-            if type(setthreadidentity) == "function" then
-                pcall(setthreadidentity, self.UIThreadIdentity or 8)
-            end
             self.SyncingControls = (self.SyncingControls or 0) + 1
             local updated, updateFailure = pcall(function()
-                control.Native:Refresh(currentLabels)
-                local record = records[selected]
-                control.Native:Select(record and record.Label or missing or "Auto")
+                self:WithUI(function()
+                    control.Native:Refresh(currentLabels)
+                    local record = records[selected]
+                    control.Native:Select(record and record.Label or missing or "Auto")
+                end)
             end)
             self.SyncingControls = self.SyncingControls - 1
             if not updated then
                 self:Warn("Vehicle list", updateFailure)
+            else
+                self[key .. "Signature"] = signature
             end
+        else
+            self[key .. "Signature"] = signature
         end
-        self[key .. "Signature"] = signature
     end
     return true
 end
@@ -2502,18 +2534,20 @@ function App:BindControl(native, key, kind)
         local suppress = silent == true
         owner.SyncingControls = (owner.SyncingControls or 0) + (suppress and 1 or 0)
         local ok, failure = pcall(function()
-            if kind == "Toggle" then
-                native:Set(value == true, not suppress)
-            elseif kind == "Keybind" then
-                native:Set(typeof(value) == "EnumItem" and value.Name or tostring(value))
-            elseif kind == "Dropdown" then
-                native:Select(tostring(value))
-            elseif kind == "Vehicle" then
-                local record = owner.RaceVehicleRecords[value]
-                native:Select(record and record.Label or "Auto")
-            else
-                native:Set(value)
-            end
+            return owner:WithUI(function()
+                if kind == "Toggle" then
+                    native:Set(value == true, not suppress)
+                elseif kind == "Keybind" then
+                    native:Set(typeof(value) == "EnumItem" and value.Name or tostring(value))
+                elseif kind == "Dropdown" then
+                    native:Select(tostring(value))
+                elseif kind == "Vehicle" then
+                    local record = owner.RaceVehicleRecords[value]
+                    native:Select(record and record.Label or "Auto")
+                else
+                    native:Set(value)
+                end
+            end)
         end)
         owner.SyncingControls = owner.SyncingControls - (suppress and 1 or 0)
         if not ok then
@@ -2541,6 +2575,7 @@ function App:ApplyUIOption(key, value)
 end
 
 function App:ToggleMenu(open)
+    return self:WithUI(function()
     local window = self.Window
     if not self.Running or not window or window.Destroyed then
         return
@@ -2554,20 +2589,23 @@ function App:ToggleMenu(open)
     elseif not open and not window.Closed then
         window:Close()
     end
+    end)
 end
 
 function App:UpdateUI()
     if not self.Running or not self.Window or self.Window.Destroyed then
         return
     end
-    self.Controls.StatusParagraph:SetDesc(tostring(self.Status) .. "\nTarget: " .. tostring(self.TargetName))
-    self.Controls.ProgressParagraph:SetDesc(string.format("Pumpkin Balance: %d\nCrystal Progress: %d / %d\nKnown Crystal Locations: %d", self:Balance(), self:CrystalProgress(), self.CrystalGoal, self:KnownCrystals()))
-    self.Controls.SessionParagraph:SetDesc(string.format("Pumpkins: %d\nCrystals: %d\nCurrency Earned: %d", self.SessionPumpkins, self.SessionCrystals, self.SessionCurrency))
+    local updates = {
+        {self.Controls.StatusParagraph, tostring(self.Status) .. "\nTarget: " .. tostring(self.TargetName)},
+        {self.Controls.ProgressParagraph, string.format("Pumpkin Balance: %d\nCrystal Progress: %d / %d\nKnown Crystal Locations: %d", self:Balance(), self:CrystalProgress(), self.CrystalGoal, self:KnownCrystals())},
+        {self.Controls.SessionParagraph, string.format("Pumpkins: %d\nCrystals: %d\nCurrency Earned: %d", self.SessionPumpkins, self.SessionCrystals, self.SessionCurrency)},
+    }
     if self.Controls.RewardsParagraph then
-        self.Controls.RewardsParagraph:SetDesc(string.format("Claimed this session: %d\n%s", self.SessionRewards, self.ClaimStatus))
+        updates[#updates + 1] = {self.Controls.RewardsParagraph, string.format("Claimed this session: %d\n%s", self.SessionRewards, self.ClaimStatus)}
     end
     if self.Controls.RaceStatusParagraph then
-        self.Controls.RaceStatusParagraph:SetDesc(string.format("%s\nVehicle: %s\nCheckpoint: %s", self.RaceStatus, self.RaceVehicleName, self.RacePointName))
+        updates[#updates + 1] = {self.Controls.RaceStatusParagraph, string.format("%s\nVehicle: %s\nCheckpoint: %s", self.RaceStatus, self.RaceVehicleName, self.RacePointName)}
         local ok, objectives = pcall(UIState.Objectives.get, UIState.Objectives)
         local objective = ok and type(objectives) == "table" and objectives.HalloweenRaceLaps
         local current = type(objective) == "table" and tonumber(objective.Current) or 0
@@ -2580,18 +2618,29 @@ function App:UpdateUI()
         local values = self.RaceDeps and self.RaceDeps.Values
         local lap = values and values.Parent and values:FindFirstChild("Laps")
         local laps = self.RaceDeps and self.RaceDeps.Script and self.RaceDeps.Script:FindFirstChild("Laps")
-        self.Controls.RaceProgressParagraph:SetDesc(string.format("Current Lap: %d / %d\nHalloween Race Quest: %d / %d", lap and lap.Value or 0, laps and laps.Value or self.Settings.RaceLaps, current or 0, goal))
-        self.Controls.RaceSessionParagraph:SetDesc(string.format("Confirmed Races: %d\nRace Pumpkins: %d", self.SessionRaces, self.SessionRacePumpkins))
+        updates[#updates + 1] = {self.Controls.RaceProgressParagraph, string.format("Current Lap: %d / %d\nHalloween Race Quest: %d / %d", lap and lap.Value or 0, laps and laps.Value or self.Settings.RaceLaps, current or 0, goal)}
+        updates[#updates + 1] = {self.Controls.RaceSessionParagraph, string.format("Confirmed Races: %d\nRace Pumpkins: %d", self.SessionRaces, self.SessionRacePumpkins)}
     end
     if self.Controls.QuestStatusParagraph then
-        self.Controls.QuestStatusParagraph:SetDesc(string.format("%s\nVehicle: %s", self.QuestStatus, self.QuestVehicleName))
+        updates[#updates + 1] = {self.Controls.QuestStatusParagraph, string.format("%s\nVehicle: %s", self.QuestStatus, self.QuestVehicleName)}
         local miles, milesGoal = self:QuestProgress("DriveMiles")
         local speed, speedGoal = self:QuestProgress("SpeedTraps")
-        self.Controls.QuestProgressParagraph:SetDesc(string.format("Drive Distance: %.2f / %g MI\nSpeed Traps: %d / %g MPH", miles, milesGoal, math.floor(speed), speedGoal))
+        updates[#updates + 1] = {self.Controls.QuestProgressParagraph, string.format("Drive Distance: %.2f / %g MI\nSpeed Traps: %d / %g MPH", miles, milesGoal, math.floor(speed), speedGoal)}
     end
+    return self:WithUI(function()
+        if not self.Running or not self.Window or self.Window.Destroyed then
+            return
+        end
+        for _, update in ipairs(updates) do
+            if update[1] then
+                update[1]:SetDesc(update[2])
+            end
+        end
+    end)
 end
 
 function App:CleanupLibrary()
+    return self:WithUI(function()
     local library = self.WindUI
     if not library then
         return
@@ -2629,9 +2678,11 @@ function App:CleanupLibrary()
             end
         end
     end
+    end)
 end
 
 function App:Layout(viewportOverride)
+    return self:WithUI(function()
     local window = self.Window
     local library = self.WindUI
     if not self.Running or not window or window.Destroyed or not library.ScreenGui.Parent then
@@ -2667,9 +2718,11 @@ function App:Layout(viewportOverride)
             math.clamp(position.Y, 0, math.max(viewport.Y - button.AbsoluteSize.Y, 0))
         )
     end
+    end)
 end
 
 function App:ResetWindow()
+    return self:WithUI(function()
     local window = self.Window
     if not self.Running or not window or window.Destroyed then
         return
@@ -2684,12 +2737,15 @@ function App:ResetWindow()
     end
     self:Spawn(function()
         task.wait(0.5)
+        self:WithUI(function()
         if not self.Running or window.Destroyed then
             return
         end
         window:SetSize(UDim2.fromOffset(600, 360))
         window:SetToTheCenter()
         self:Layout()
+        end)
+    end)
     end)
 end
 
@@ -2753,21 +2809,24 @@ end
 
 function App:PrepareWindFonts(creator)
     creator.UpdateFont = function(font)
-        creator.Font = font
-        for index = #creator.FontObjects, 1, -1 do
-            local object = creator.FontObjects[index]
-            local ok = pcall(function()
-                local face = object.FontFace
-                object.FontFace = Font.new(font, face.Weight, face.Style)
-            end)
-            if not ok then
-                table.remove(creator.FontObjects, index)
+        return self:WithUI(function()
+            creator.Font = font
+            for index = #creator.FontObjects, 1, -1 do
+                local object = creator.FontObjects[index]
+                local ok = pcall(function()
+                    local face = object.FontFace
+                    object.FontFace = Font.new(font, face.Weight, face.Style)
+                end)
+                if not ok then
+                    table.remove(creator.FontObjects, index)
+                end
             end
-        end
+        end)
     end
 end
 
 function App:BuildUI()
+    return self:WithUI(function()
     if type(getthreadidentity) == "function" then
         local ok, identity = pcall(getthreadidentity)
         if ok and type(identity) == "number" then
@@ -3014,11 +3073,15 @@ function App:BuildUI()
             text = text:match("^%s*(.-)%s*$")
             if text ~= "" and #text <= 200 and not text:find("[<>\r\n]") and not text:find("[^ -~]") then
                 creditText = text
-                credit:SetTitle("Credits - " .. text)
+                self:WithUI(function()
+                    credit:SetTitle("Credits - " .. text)
+                end)
                 return
             end
         end
-        credit:SetTitle("Credits - unavailable")
+        self:WithUI(function()
+            credit:SetTitle("Credits - unavailable")
+        end)
     end)
     local button = Instance.new("TextButton")
     button.Name = "HalloweenFloatingButton"
@@ -3050,6 +3113,7 @@ function App:BuildUI()
         return Vector2.new(event.Position.X, event.Position.Y)
     end
     local function begin(event)
+        return self:WithUI(function()
         if not self.Running or pointer then
             return
         end
@@ -3061,8 +3125,10 @@ function App:BuildUI()
         dragged = false
         pressedAt = position(event)
         offset = pressedAt - button.AbsolutePosition
+        end)
     end
     local function move(event)
+        return self:WithUI(function()
         if not pointer or not self.Running then
             return
         end
@@ -3082,6 +3148,7 @@ function App:BuildUI()
                 math.clamp(localPosition.Y, 0, math.max(viewport.Y - button.AbsoluteSize.Y, 0))
             )
         end
+        end)
     end
     local function finish(event)
         if not pointer or (event ~= pointer and not (isMouse and event.UserInputType == Enum.UserInputType.MouseButton1)) then
@@ -3121,6 +3188,7 @@ function App:BuildUI()
         end
     end)
     return window
+    end)
 end
 
 local initialized, failure = xpcall(function()
