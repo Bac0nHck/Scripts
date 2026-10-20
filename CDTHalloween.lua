@@ -1446,6 +1446,23 @@ function App:RaceStep()
             return
         end
         if state.JoinStarted then
+            if not deps.Script.LobbyProgress.Value then
+                if deps.Script.RaceProgress.Value then
+                    self.RaceStatus = "Waiting for the Halloween race lobby to reopen"
+                    return
+                end
+                if now >= (state.NextJoinAt or 0) then
+                    if not self:RaceValid(generation, character, car, true) then
+                        return
+                    end
+                    state.NextJoinAt = now + 10
+                    self.RaceStatus = "Retrying entry to the Halloween race lobby"
+                    deps.StartLobby:FireServer("Halloween")
+                else
+                    self.RaceStatus = string.format("Waiting for the race lobby to accept entry; retry in %d seconds", math.max(math.ceil(state.NextJoinAt - now), 0))
+                end
+                return
+            end
             if not state.VoteSent and deps.Script.LobbyProgress.Value then
                 if not self:RaceValid(generation, character, car, true) then
                     return
