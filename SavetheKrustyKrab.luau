@@ -343,7 +343,7 @@ local ok, setupError = xpcall(function()
 		end
 		return current() and alive() ~= nil
 	end
-	local function firePrompt(prompt)
+	local function firePrompt(prompt, validate)
 		if not current() or not prompt.Parent or not ready(prompt, "Prompt", 1) then return false end
 		local target = prompt.Parent:IsA("Attachment") and prompt.Parent.Parent or prompt.Parent
 		local model = target:FindFirstAncestorOfClass("Model")
@@ -351,6 +351,7 @@ local ok, setupError = xpcall(function()
 		local deadline = os.clock() + 0.3
 		while current() and prompt.Parent and not prompt.Enabled and os.clock() < deadline do task.wait(0.05) end
 		if not prompt.Parent or not prompt.Enabled or not current() then return false end
+		if validate and not validate() then return false end
 		local fired, err = pcall(function()
 			assert(type(fireproximityprompt) == "function", "Prompt interaction is unavailable")
 			fireproximityprompt(prompt, prompt.HoldDuration)
@@ -378,9 +379,9 @@ local ok, setupError = xpcall(function()
 			if (tool:GetAttribute("ReferenceName") or tool.Name:match("^([%w]+)_[%x%-]+$") or tool.Name) == reference then return tool end
 		end
 	end
-	local function hasInventoryRoom()
+	local function hasInventoryRoom(amount)
 		local inventory = inventoryController:GetMatchInventory()
-		return not inventory or inventory:CanAddItem(1)
+		return not inventory or inventory:CanAddItem(amount or 1)
 	end
 	local function equip(tool)
 		if not current() or not tool or not alive() then return false end
@@ -492,7 +493,7 @@ local ok, setupError = xpcall(function()
 		stopBossCleaning()
 		local item = ownedExtinguisher()
 		if not item then
-			if ownedVendor or not availableVendor or not ready(availableVendor, "FireTake", 2) or not moveTo(availableVendor.Instance)
+			if not hasInventoryRoom() or ownedVendor or not availableVendor or not ready(availableVendor, "FireTake", 2) or not moveTo(availableVendor.Instance)
 				or not current() or not state.Fire or availableVendor.Instance:GetAttribute("OccupantId") then return false end
 			local success = awaitResult(function() return availableVendor.Server:TakeExtinguisher() end)
 			local deadline = os.clock() + 2
@@ -532,6 +533,7 @@ local ok, setupError = xpcall(function()
 		if type(energy) ~= "number" or type(maximum) ~= "number" or maximum <= 0 or energy >= maximum or energy > maximum * threshold / 100 then return false end
 		local drink = findTool("KelpShake")
 		if drink then return due(drink, "Drink") end
+		if not hasInventoryRoom() then return false end
 		for _, machine in all("KelpShakeMachine") do
 			local timestamp = machine._remotes.ReadyTimestamp:Get()
 			if usable(machine) and type(timestamp) == "number" and timestamp <= workspace:GetServerTimeNow() and due(machine, "Claim") then return true end
@@ -887,24 +889,37 @@ local ok, setupError = xpcall(function()
 			if not npc or not usable(npc) or not due(npc, "Deliver") then continue end
 			for _, component in all("Tray") do
 				local tray = component:GetTool()
-				if not tray or not carried[tray] or heldOnly and tray.Parent ~= player.Character or not component:_IsTrayCorrectForOrder(order) then continue end
+				if not tray or not carried[tray] or heldOnly == true and tray.Parent ~= player.Character or not component:_IsTrayCorrectForOrder(order) then continue end
 				if equip(tray) and moveTo(npc:GetVisualModel() or npc.Instance) then
 					local live = restaurant.State.RestaurantOrders()[order.OrderId]
 					if live and live.OrderStatus ~= "Delivered" and usable(npc) and component:_IsTrayCorrectForOrder(live) then
-						return invoke(npc, "Deliver", function() return restaurantController.Server:DeliverOrder(live.CustomerId) end)
+						local success = invoke(npc, "Deliver", function() return restaurantController.Server:DeliverOrder(live.CustomerId) end)
+						local deadline = os.clock() + 1
+						while current() and success and tray.Parent and os.clock() < deadline do
+							local latest = restaurant.State.RestaurantOrders()[order.OrderId]
+							if not latest or latest.OrderStatus == "Delivered" then break end
+							task.wait(0.05)
+						end
+						return success
 					end
 				end
 				return false
 			end
 		end
 		if heldOnly then return false end
+		if not hasInventoryRoom() then return false end
 		for _, order in ordered() do
 			if order.OrderStatus ~= "Prepared" then continue end
 			for _, counter in all("TrayCounter") do
 				for _, model in counter.Instance:GetChildren() do
 					if model:IsA("Model") and model:GetAttribute("OrderId") == order.OrderId then
 						local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
-						if prompt and prompt.Enabled and due(prompt, "Prompt") then return firePrompt(prompt) end
+						if prompt and prompt.Enabled and due(prompt, "Prompt") then
+							return firePrompt(prompt, function()
+								local live = restaurant.State.RestaurantOrders()[order.OrderId]
+								return hasInventoryRoom() and live ~= nil and live.OrderStatus == "Prepared"
+							end)
+						end
 					end
 				end
 			end
@@ -939,6 +954,7 @@ local ok, setupError = xpcall(function()
 			end
 			return false
 		end
+		if not hasInventoryRoom() then return false end
 		for _, machine in all("KelpShakeMachine") do
 			local timestamp = machine._remotes.ReadyTimestamp:Get()
 			if usable(machine) and type(timestamp) == "number" and workspace:GetServerTimeNow() >= timestamp and due(machine, "Claim") and moveTo(machine.Instance) then
@@ -956,6 +972,7 @@ local ok, setupError = xpcall(function()
 		end end
 	end
 	local function finishCooking(olderOnly)
+		if not hasInventoryRoom() then return false end
 		updateReadyFood()
 		local selected, record
 		for machine, entry in foodReady do
@@ -1088,21 +1105,26 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
-	local function disposeTrash(tool, reference)
-		for _, name in reference == "TrashBag" and {"Dumpster"} or {"TrashBin", "Dumpster"} do
+	local function disposeTrash(tool, reference, validate)
+		local destinations = reference == "Tray" and {"TrashBin"} or reference == "TrashBag" and {"Dumpster"} or {"TrashBin", "Dumpster"}
+		for _, name in destinations do
 			for _, container in all(name) do
+				if validate and not validate() then return false end
 				local object = container.Instance
 				local prompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
 				if not usable(container) or object:GetAttribute("Hidden") == true or object:GetAttribute("FullCapacity") == true
 					or not prompt or not due(prompt, "Prompt") or not due(container, "Dispose") or not container:CanDisposeTool(tool) then continue end
 				if not ready(container, "Dispose", 1.5) or not equip(tool) then return false end
 				local count, amount = object:GetAttribute("DisposedCount") or 0, tool:GetAttribute("Amount") or 1
-				if not firePrompt(prompt) then continue end
+				if not firePrompt(prompt, function()
+					return tool.Parent == player.Character and container:CanDisposeTool(tool) and prompt.ActionText == "Throw Away"
+						and (not validate or validate())
+				end) then continue end
 				local deadline = os.clock() + 1.5
 				repeat
 					if not tool.Parent or (tool:GetAttribute("Amount") or amount) < amount
 						or (object:GetAttribute("DisposedCount") or 0) > count and object:GetAttribute("LastDisposedBy") == player.UserId then
-						addLog(reference == "TrashBag" and "Trash bag disposed" or "Trash disposed")
+						addLog(reference == "Tray" and "Removed an expired order tray" or reference == "TrashBag" and "Trash bag disposed" or "Trash disposed")
 						return true
 					end
 					if not current() then return false end
@@ -1116,6 +1138,43 @@ local ok, setupError = xpcall(function()
 	local function slasherActive()
 		for _, object in CollectionService:GetTagged("HashSlingingSlasher") do
 			if object:IsDescendantOf(workspace) and object:GetAttribute("Departing") ~= true and object:GetAttribute("Defeated") ~= true then return true end
+		end
+		return false
+	end
+	local orphanTrays = setmetatable({}, {__mode = "k"})
+	local function trayIsExpired(component, tool)
+		if not tool.Parent or component:GetOwner() ~= player then return false end
+		local id = tool:GetAttribute("OrderId")
+		if type(id) ~= "string" or id == "" then return false end
+		for _, order in restaurant.State.RestaurantOrders() do
+			if order.OrderStatus == "Delivered" then continue end
+			if order.OrderId == id then return false end
+			local npc = customer(order.CustomerId)
+			if npc and npc.Instance:GetAttribute("CustomerAction") ~= "Leaving" and npc.Instance:GetAttribute("Departing") ~= true
+				and component:_IsTrayCorrectForOrder(order) then return false end
+		end
+		return true
+	end
+	local function manageInventory()
+		if slasherActive() then return false end
+		if not hasInventoryRoom() and state.Serve and serve("carried") then return true end
+		for _, component in all("Tray") do
+			local tool = component:GetTool()
+			if not tool or component:GetOwner() ~= player or not tool.Parent then continue end
+			if not trayIsExpired(component, tool) then orphanTrays[tool] = nil continue end
+			orphanTrays[tool] = orphanTrays[tool] or os.clock()
+			if os.clock() - orphanTrays[tool] >= 3 then
+				if disposeTrash(tool, "Tray", function() return trayIsExpired(component, tool) end) then orphanTrays[tool] = nil return true end
+			end
+		end
+		if not hasInventoryRoom() then
+			for _, tool in tools() do
+				local reference = tool:GetAttribute("ReferenceName")
+				local data = reference and itemToolkit.getItemData(reference)
+				if reference == "TrashBag" or reference == "TrashTray" or data and data.ItemType == "Trash" then
+					if disposeTrash(tool, reference) then return true end
+				end
+			end
 		end
 		return false
 	end
@@ -1211,7 +1270,7 @@ local ok, setupError = xpcall(function()
 				local mop = findTool("Mop") or findTool("InstaMop")
 				if not mop then
 					local giver = all("MopGiver")[1]
-					if giver and due(giver, "Mop") and moveTo(giver.Instance) then return invoke(giver, "Mop", function() return giver.Server:TakeMop() end) end
+					if giver and hasInventoryRoom() and due(giver, "Mop") and moveTo(giver.Instance) then return invoke(giver, "Mop", function() return giver.Server:TakeMop() end) end
 				elseif equip(mop) and moveTo(puddle.Instance) then
 					local success = invoke(puddle, "Clean", function() return puddle.Server:AttemptMop() end)
 					if success then actionLockUntil = os.clock() + 0.35 end
@@ -1262,7 +1321,7 @@ local ok, setupError = xpcall(function()
 			if usable(machine) and machine.Instance:GetAttribute("OccupantId") == player.UserId
 				and orbToolkit.isRecharged(player:GetAttribute("OrbOfConfusionReadyDay")) and orbToolkit.isRecharged(machine._remotes.ReadyDay:Get())
 				and pending and (pending.ClaimBossOrb or 0) > os.clock() then return false, true end
-			if usable(machine) and machine.Instance:GetAttribute("Unlocked") == true and not machine.Instance:GetAttribute("OccupantId")
+			if hasInventoryRoom() and usable(machine) and machine.Instance:GetAttribute("Unlocked") == true and not machine.Instance:GetAttribute("OccupantId")
 					and orbToolkit.isRecharged(machine._remotes.ReadyDay:Get()) and due(machine, "ClaimBossOrb") and moveTo(machine.Instance) then
 				if not current() or not ready(machine, "ClaimBossOrb", 3) then return false, false end
 				session.PendingOrbClaim = {Machine = machine, SentAt = os.clock()}
@@ -1342,7 +1401,7 @@ local ok, setupError = xpcall(function()
 				local mop = findTool("Mop") or findTool("InstaMop")
 				if not mop then
 					local giver = all("MopGiver")[1]
-					if giver and due(giver, "BossMop") and moveTo(giver.Instance) then return invoke(giver, "BossMop", function() return giver.Server:TakeMop() end) end
+					if giver and hasInventoryRoom() and due(giver, "BossMop") and moveTo(giver.Instance) then return invoke(giver, "BossMop", function() return giver.Server:TakeMop() end) end
 				elseif due(boss, "CleanBoss") and equip(mop) and moveTo(bossModel(boss), 8) then
 					if invoke(boss, "CleanBoss", function() return boss.Server:SetCleaning(true) end, 1) then
 						cleaningBoss, cleaningStarted = boss, os.clock()
@@ -1529,6 +1588,7 @@ local ok, setupError = xpcall(function()
 		if not burning then return false end
 		local item = ownedExtinguisher()
 		if item and (item:GetAttribute("Charge") or 0) >= 1 then return true end
+		if not hasInventoryRoom() then return false end
 		for _, vendor in all("ExtinguisherVendor") do
 			if usable(vendor) and not vendor.Instance:GetAttribute("OccupantId") and (vendor.Instance:GetAttribute("CurrentCharge") or 0) >= 1
 				and due(vendor, "FireTake") then return true end
@@ -1627,7 +1687,7 @@ local ok, setupError = xpcall(function()
 			if not orb and orbToolkit.isRecharged(player:GetAttribute("OrbOfConfusionReadyDay")) then orb = findTool("RechargingOrbOfConfusion") end
 			local orbReady = orb and due(orb, "UseBossOrb")
 			if not orb then for _, machine in all("OrbOfConfusionMachine") do
-				if usable(machine) and machine.Instance:GetAttribute("Unlocked") == true and not machine.Instance:GetAttribute("OccupantId")
+				if hasInventoryRoom() and usable(machine) and machine.Instance:GetAttribute("Unlocked") == true and not machine.Instance:GetAttribute("OccupantId")
 					and orbToolkit.isRecharged(machine._remotes.ReadyDay:Get()) and due(machine, "ClaimBossOrb") then orbReady = true end
 			end end
 			for _, boss in all("Villain") do
@@ -1649,7 +1709,7 @@ local ok, setupError = xpcall(function()
 				if usable(boss) and object:GetAttribute("CapturedPlayerId") == player.UserId then fact(0.5, "Escape", boss)
 				elseif usable(boss) and not bossEnded(object) and object:GetAttribute("Settled") == true and object:GetAttribute("Airborne") ~= true then
 					local giver = all("MopGiver")[1]
-					if findTool("Mop") or findTool("InstaMop") or giver and due(giver, "BossMop") then fact(1.5, "BossHold", boss) end
+					if findTool("Mop") or findTool("InstaMop") or giver and hasInventoryRoom() and due(giver, "BossMop") then fact(1.5, "BossHold", boss) end
 				end
 			end
 		end
@@ -1702,8 +1762,9 @@ local ok, setupError = xpcall(function()
 		if (state.Plankton or state.Bosses) and runJob(1.5, "Plankton", kickPlankton, false) then return end
 		if state.Fire and runJob(2, "Fire", extinguishFires, true) then return end
 		if state.Energy and runJob(2, "Energy", refillEnergy) then return end
+		if (state.Serve or state.Cook or state.Clean or state.Energy) and runJob(2.5, "Inventory", manageInventory) then return end
 		if cycle.State.CurrentPhase() == "DayShift" then
-			if state.Serve and runJob(3, "Serve", serve, true) then return end
+			if state.Serve and runJob(3, "Serve", serve, "carried") then return end
 			if state.Cook and runJob(3, "Food", finishCooking, true) then return end
 			if state.Serve and runJob(3, "Serve", serve, false) then return end
 			if state.Cook and runJob(3, "Food", finishCooking, false) then return end
