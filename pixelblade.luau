@@ -1,4 +1,5 @@
 local launchMode, resumed = ...
+if not game:IsLoaded() then game.Loaded:Wait() end
 local host: any = getgenv and getgenv() or _G
 if launchMode == "teleport" then
 	if host.__PixelBladeRemoteLoaded == game.JobId then return end
@@ -29,12 +30,16 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
-local player = Players.LocalPlayer
 if game.GameId ~= 6161049307 then
 	warn("[Pixel Blade] This game is not supported.")
 	return
 end
-if not game:IsLoaded() then game.Loaded:Wait() end
+local player = Players.LocalPlayer
+while player == nil do
+	Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+	player = Players.LocalPlayer
+end
+local playerGui = player:WaitForChild("PlayerGui")
 
 local LIBRARY_URL = "https://raw.githubusercontent.com/PookiePepelsss/Airflow-UI/refs/heads/main/Source.luau"
 local LIBRARY_PAGE = "https://github.com/PookiePepelsss/Airflow-UI"
@@ -1198,7 +1203,7 @@ local function visualsStep()
 				label.TextStrokeTransparency = 0.25
 				label.TextWrapped = true
 				label.Parent = billboard
-				billboard.Parent = player:WaitForChild("PlayerGui")
+				billboard.Parent = playerGui
 				record.Billboard, record.Label = billboard, label
 			elseif not state.EnemyInfo and record.Billboard then record.Billboard:Destroy() record.Billboard = nil end
 			if record.Billboard then
@@ -1297,7 +1302,7 @@ local function buildUI()
 	window = airflow:CreateWindow({ Name = "Pixel Blade", LoadingSubtitle = "PvE", Icon = "swords", Theme = "PixelBladeAmber",
 		ToggleUIKeybind = options.MenuKey, Size = UDim2.fromOffset(660, 540), MinSize = Vector2.new(280, 220),
 		MaxSize = Vector2.new(1000, 750), KeepOnScreen = true, MaxNotifications = 3,
-		OpenButton = { Title = "Pixel Blade", Icon = "swords" }, Loading = false, Parent = player:WaitForChild("PlayerGui") })
+		OpenButton = { Title = "Pixel Blade", Icon = "swords" }, Loading = false, Parent = playerGui })
 	session.Window = window
 	window.Gui.IgnoreGuiInset = false
 	window.Gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
