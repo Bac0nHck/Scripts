@@ -1430,6 +1430,39 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
+	local function mopNeeded()
+		if state.Clean then
+			for _, puddle in all("Puddle") do if usable(puddle) then return true end end
+		end
+		if state.Bosses then
+			for _, boss in all("DirtyBubble") do if usable(boss) and not bossEnded(boss.Instance) then return true end end
+		end
+		return false
+	end
+	local function returnMop()
+		if not current() or not (state.Clean or state.Bosses) then return false end
+		local mop = findTool("Mop") or findTool("InstaMop")
+		if not mop or mopNeeded() or cleaningBoss or session.CleaningRelease or busyCleaning() or os.clock() < actionLockUntil then
+			session.MopIdleSince = nil
+			return false
+		end
+		session.MopIdleSince = session.MopIdleSince or os.clock()
+		if os.clock() - session.MopIdleSince < 0.5 then return false end
+		for _, giver in all("MopGiver") do
+			if not usable(giver) or giver._processingRequest or not due(giver, "MopReturn") then continue end
+			if not moveTo(giver.Instance) or mopNeeded() or busyCleaning() or session.CleaningRelease or os.clock() < actionLockUntil then return false end
+			if not findTool("Mop") and not findTool("InstaMop") then return false end
+			local success = invoke(giver, "MopReturn", function() return giver.Server:ReturnMop() end, 3)
+			local deadline = os.clock() + 1.5
+			while current() and success and (findTool("Mop") or findTool("InstaMop")) and os.clock() < deadline do task.wait(0.05) end
+			if not findTool("Mop") and not findTool("InstaMop") then
+				session.MopIdleSince = nil
+				addLog("Mop returned")
+			end
+			return success
+		end
+		return false
+	end
 	local pendingRepairs = setmetatable({}, {__mode = "k"})
 	local function reconcileRepairs()
 		for object, record in pendingRepairs do
@@ -1780,6 +1813,7 @@ local ok, setupError = xpcall(function()
 		if state.Fire and runJob(2, "Fire", extinguishFires, true) then return end
 		if state.Energy and runJob(2, "Energy", refillEnergy) then return end
 		if (state.Serve or state.Cook or state.Clean or state.Energy) and runJob(2.5, "Inventory", manageInventory) then return end
+		if (state.Clean or state.Bosses) and runJob(2.75, "MopReturn", returnMop) then return end
 		if cycle.State.CurrentPhase() == "DayShift" then
 			if state.Serve and runJob(3, "Serve", serve, "carried") then return end
 			if state.Cook and runJob(3, "Food", finishCooking, true) then return end
