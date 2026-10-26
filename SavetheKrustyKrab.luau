@@ -221,6 +221,7 @@ local ok, setupError = xpcall(function()
 	local customPlayers = module("Systems.CustomPlayer.CustomPlayerHandler_ClientClass")
 	local backpack = module("Systems.Backpack.BackpackHandler")
 	local backpackSlice = module("Systems.Backpack.BackpackSlice")
+	local inventoryController = module("Systems.Inventory.InventoryController")
 	local itemToolkit = module("Shared.Item.ItemToolkit")
 	local charm = module("Packages.Charm")
 	local cameraController = module("Systems.Camera.CameraController")
@@ -317,11 +318,19 @@ local ok, setupError = xpcall(function()
 		if not part then return false end
 		if not prepareAction() then return false end
 		local zone = target:GetAttribute("ReachZoneCFrame")
-		local position = typeof(zone) == "CFrame" and zone.Position or (part:IsA("Attachment") and part.WorldPosition or part.Position)
+		local zoneSize = target:GetAttribute("ReachZoneSize")
+		local hasZone = typeof(zone) == "CFrame" and typeof(zoneSize) == "Vector3"
+		local position = part:IsA("Attachment") and part.WorldPosition or part.Position
 		local distance = (root.Position - position).Magnitude
-		if distance > (standoff and standoff + 2 or 4) or (standoff and distance < standoff - 1) or typeof(zone) == "CFrame" then
+		local localRoot = hasZone and zone:PointToObjectSpace(root.Position)
+		local outsideZone = hasZone and (math.abs(localRoot.X) > zoneSize.X / 2 or math.abs(localRoot.Z) > zoneSize.Z / 2)
+		if distance > (standoff and standoff + 2 or 4) or (standoff and distance < standoff - 1) or outsideZone then
 			local desired = position + Vector3.new(0, 2, standoff or 3)
-			if typeof(zone) == "CFrame" then desired = position end
+			if hasZone then
+				local point = zone:PointToObjectSpace(desired)
+				local halfX, halfZ = math.max(0, zoneSize.X / 2 - 0.5), math.max(0, zoneSize.Z / 2 - 0.5)
+				desired = zone:PointToWorldSpace(Vector3.new(math.clamp(point.X, -halfX, halfX), point.Y, math.clamp(point.Z, -halfZ, halfZ)))
+			end
 			local params = RaycastParams.new()
 			params.FilterType = Enum.RaycastFilterType.Exclude
 			params.FilterDescendantsInstances = {player.Character, target}
@@ -368,6 +377,10 @@ local ok, setupError = xpcall(function()
 		for _, tool in tools() do
 			if (tool:GetAttribute("ReferenceName") or tool.Name:match("^([%w]+)_[%x%-]+$") or tool.Name) == reference then return tool end
 		end
+	end
+	local function hasInventoryRoom()
+		local inventory = inventoryController:GetMatchInventory()
+		return not inventory or inventory:CanAddItem(1)
 	end
 	local function equip(tool)
 		if not current() or not tool or not alive() then return false end
@@ -1075,24 +1088,45 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
+	local function disposeTrash(tool, reference)
+		for _, name in reference == "TrashBag" and {"Dumpster"} or {"TrashBin", "Dumpster"} do
+			for _, container in all(name) do
+				local object = container.Instance
+				local prompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
+				if not usable(container) or object:GetAttribute("Hidden") == true or object:GetAttribute("FullCapacity") == true
+					or not prompt or not due(prompt, "Prompt") or not due(container, "Dispose") or not container:CanDisposeTool(tool) then continue end
+				if not ready(container, "Dispose", 1.5) or not equip(tool) then return false end
+				local count, amount = object:GetAttribute("DisposedCount") or 0, tool:GetAttribute("Amount") or 1
+				if not firePrompt(prompt) then continue end
+				local deadline = os.clock() + 1.5
+				repeat
+					if not tool.Parent or (tool:GetAttribute("Amount") or amount) < amount
+						or (object:GetAttribute("DisposedCount") or 0) > count and object:GetAttribute("LastDisposedBy") == player.UserId then
+						addLog(reference == "TrashBag" and "Trash bag disposed" or "Trash disposed")
+						return true
+					end
+					if not current() then return false end
+					task.wait(0.05)
+				until os.clock() >= deadline
+				ready(container, "Dispose", 3)
+			end
+		end
+		return false
+	end
 	local function clean(mode)
 		local bagsOnly, urgent = mode == "bags", mode == "urgent"
 		local heldTrash, heldReference
 		for _, tool in tools() do
 			local reference = tool:GetAttribute("ReferenceName") or tool.Name:match("^([%w]+)_[%x%-]+$") or tool.Name
 			local data = itemToolkit.getItemData(reference)
-			if reference == "TrashBag" or not bagsOnly and (reference == "TrashTray" or data and data.ItemType == "Trash") then heldTrash, heldReference = tool, reference break end
+			if reference == "TrashBag" then heldTrash, heldReference = tool, reference break
+			elseif not heldTrash and not bagsOnly and (reference == "TrashTray" or data and data.ItemType == "Trash") then heldTrash, heldReference = tool, reference end
 		end
 		if heldTrash then
-			for _, container in all(heldReference == "TrashBag" and "Dumpster" or "TrashBin") do
-				local object = container.Instance
-				local prompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
-				if usable(container) and object:GetAttribute("Hidden") ~= true and object:GetAttribute("FullCapacity") ~= true
-					and prompt and due(prompt, "Prompt") then
-					if equip(heldTrash) and firePrompt(prompt) then return true end
-				end
-			end
+			if disposeTrash(heldTrash, heldReference) then return true end
+			if heldReference == "TrashBag" then return false end
 		end
+		local room = not heldTrash and hasInventoryRoom()
 		local needed, pendingOrders = {}, false
 		if urgent then
 			local stock = workstation.State.AssemblingTableStash()
@@ -1115,9 +1149,11 @@ local ok, setupError = xpcall(function()
 			local reference = model and (model:GetAttribute("ReferenceName") or model.Name:match("^([%w]+)_[%x%-]+$") or model.Name)
 			local data = reference and itemToolkit.getItemData(reference)
 			local action, rank = prompt.ActionText, nil
+			local pickup = action == "Empty Trash" or action == "Take Trash Bag" or action:lower():find("pick", 1, true) ~= nil
+			if pickup and not room then continue end
 			if reference == "TrashBag" and action:lower():find("pick", 1, true) then rank = 1
 			elseif not bagsOnly then
-				if model and (reference == "TrashTray" or model:HasTag("TrashTray") or model:HasTag("DeliveredTray")) then rank = 1
+				if room and model and (reference == "TrashTray" or model:HasTag("TrashTray") or model:HasTag("DeliveredTray")) then rank = 1
 				elseif not urgent and data and data.ItemType == "Trash" and action:lower():find("pick", 1, true) then rank = 4
 				elseif action == "Wipe Table" then
 					if not urgent or not tableToolkit.AreSeatsAvailable() then rank = 2 end
@@ -1145,7 +1181,7 @@ local ok, setupError = xpcall(function()
 			end
 		end
 		if selected then return firePrompt(selected) end
-		if not urgent or heldTrash then
+		if room and not urgent then
 			for _, container in all("TrashBin") do
 				local object = container.Instance
 				if usable(container) and object:GetAttribute("Hidden") ~= true
