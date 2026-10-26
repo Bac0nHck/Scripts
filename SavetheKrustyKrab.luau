@@ -207,6 +207,7 @@ local ok, setupError = xpcall(function()
 	local restaurantToolkit = module("Systems.Restaurant.RestaurantToolkit")
 	local cycle = module("Systems.GameCycle.GameCycleStore")
 	local cycleController = module("Systems.GameCycle.GameCycleController")
+	local nightlyTasks = module("Systems.NightlyTasks.NightlyTaskStore")
 	local workstation = module("Systems.Workstation.WorkstationStore")
 	local registerSlice = module("Systems.Register.RegisterSlice")
 	local tableToolkit = module("Systems.Table.TableToolkit")
@@ -263,6 +264,7 @@ local ok, setupError = xpcall(function()
 		if served > 0 then addLog("Crew served " .. served .. " order(s)") end
 	end)
 	observe(cycle.State.CurrentPhase, function(phase)
+		if phase ~= "NightShift" then session.SlasherNight = nil end
 		local day = cycle.State.CurrentDay()
 		if phase == "EndOfDayReport" and not completedShifts[day] then
 			completedShifts[day] = true
@@ -1144,8 +1146,17 @@ local ok, setupError = xpcall(function()
 		return false
 	end
 	local function slasherActive()
+		if cycle.State.CurrentPhase() == "NightShift" then
+			if nightlyTasks.Actions.getActiveTask("SlasherTrash") or session.SlasherNight then
+				session.SlasherNight = session.SlasherNight or {}
+				return true
+			end
+		else session.SlasherNight = nil end
 		for _, object in CollectionService:GetTagged("HashSlingingSlasher") do
-			if object:IsDescendantOf(workspace) and object:GetAttribute("Departing") ~= true and object:GetAttribute("Defeated") ~= true then return true end
+			if object:IsDescendantOf(workspace) and object:GetAttribute("Departing") ~= true and object:GetAttribute("Defeated") ~= true then
+				if cycle.State.CurrentPhase() == "NightShift" then session.SlasherNight = session.SlasherNight or {} end
+				return true
+			end
 		end
 		return false
 	end
@@ -1170,8 +1181,8 @@ local ok, setupError = xpcall(function()
 		end
 		return true
 	end
-	local function manageInventory()
-		if slasherActive() then return false end
+	local function manageInventory(allowSlasher)
+		if slasherActive() and not allowSlasher then return false end
 		if not hasInventoryRoom() and state.Serve and serve("carried") then return true end
 		for _, component in all("Tray") do
 			local tool = component:GetTool()
@@ -1667,6 +1678,17 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
+	local function shiftClockState()
+		local available = false
+		for _, clock in all("ShiftClock") do
+			if not usable(clock) then continue end
+			if (clock.Instance:GetAttribute("DayStartTimestamp") or 0) > workspace:GetServerTimeNow() then return "Countdown" end
+			if clock.Instance:GetAttribute("Interactable") == true then available = true end
+		end
+		local pending = session.PendingClock
+		if pending and pending.Day == cycle.State.CurrentDay() and os.clock() - pending.SentAt < 8 then return "Pending" end
+		return available and "Ready" or "Locked"
+	end
 	local function nextShift()
 		local phase = cycle.State.CurrentPhase()
 		local pending = session.PendingClock
@@ -1683,11 +1705,11 @@ local ok, setupError = xpcall(function()
 				cycleController.Server.DismissReport:Fire()
 				return true
 			end
-		elseif phase == "NightShift" and not unresolvedThreat() and not busyCleaning() and not session.CleaningRelease then
+		elseif phase == "NightShift" and (slasherActive() or not unresolvedThreat()) and not busyCleaning() and not session.CleaningRelease then
 			for _, clock in all("ShiftClock") do
 				if usable(clock) and clock.Instance:GetAttribute("Interactable") == true and due(clock, "Clock")
 					and (clock.Instance:GetAttribute("DayStartTimestamp") or 0) <= workspace:GetServerTimeNow() and moveTo(clock.Instance) then
-					if cycle.State.CurrentPhase() ~= "NightShift" or not cycle.State.Running() or unresolvedThreat()
+					if cycle.State.CurrentPhase() ~= "NightShift" or not cycle.State.Running() or not slasherActive() and unresolvedThreat()
 						or not usable(clock) or clock.Instance:GetAttribute("Interactable") ~= true
 						or (clock.Instance:GetAttribute("DayStartTimestamp") or 0) > workspace:GetServerTimeNow() then return false end
 					if not current() or not ready(clock, "Clock", 2) then return false end
@@ -1697,6 +1719,62 @@ local ok, setupError = xpcall(function()
 					return success
 				end
 			end
+		end
+		return false
+	end
+	local function slasherTrashStep()
+		if not current() or cycle.State.CurrentPhase() ~= "NightShift" or not slasherActive() then return false end
+		local clockState = shiftClockState()
+		if clockState ~= "Locked" then return clockState ~= "Ready" or state.NextShift == true end
+		local taskData = nightlyTasks.Actions.getActiveTask("SlasherTrash")
+		if not taskData or taskData.Completed or taskData.Progress >= taskData.Goal then return true end
+		local run = session.SlasherNight
+		if run.AwaitProgress then
+			if taskData.Progress <= run.AwaitProgress and os.clock() < run.AwaitUntil then return true end
+			run.AwaitProgress, run.AwaitUntil = nil, nil
+		end
+		local bag = findTool("TrashBag")
+		if bag then
+			run.NextTakeAt = nil
+			local progress = taskData.Progress
+			if disposeTrash(bag, "TrashBag", function()
+				local latest = nightlyTasks.Actions.getActiveTask("SlasherTrash")
+				return cycle.State.CurrentPhase() == "NightShift" and shiftClockState() == "Locked"
+					and latest ~= nil and not latest.Completed and latest.Progress < latest.Goal
+			end) then
+				local latest = nightlyTasks.Actions.getActiveTask("SlasherTrash")
+				if latest and latest.Progress > progress then
+					addLog("Slasher trash " .. latest.Progress .. " / " .. latest.Goal)
+				else run.AwaitProgress, run.AwaitUntil = progress, os.clock() + 2 end
+				return true
+			end
+			return false
+		end
+		local inventory = inventoryController:GetMatchInventory()
+		if inventory and inventory:HasItem("TrashBag") then return true end
+		if not hasInventoryRoom() then return manageInventory(true) end
+		if (run.NextTakeAt or 0) > os.clock() then return false end
+		for _, container in all("TrashBin") do
+			local object = container.Instance
+			if not usable(container) or object:GetAttribute("Hidden") == true
+				or not (object:GetAttribute("BagPile") == true or object:GetAttribute("ReadyToEmpty") == true or object:GetAttribute("FullCapacity") == true) then continue end
+			local prompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
+			if not prompt or not due(prompt, "Prompt") or not moveTo(object) then continue end
+			if not prepareAction() then return false end
+			backpack:UnequipTools()
+			task.wait(0.08)
+			container:RefreshPrompt()
+			run.NextTakeAt = os.clock() + 3
+			if not firePrompt(prompt, function()
+				local latest = nightlyTasks.Actions.getActiveTask("SlasherTrash")
+				return cycle.State.CurrentPhase() == "NightShift" and shiftClockState() == "Locked" and latest ~= nil and not latest.Completed and latest.Progress < latest.Goal
+					and not findTool("TrashBag") and not (inventory and inventory:HasItem("TrashBag")) and hasInventoryRoom()
+					and (prompt.ActionText == "Take Trash Bag" or prompt.ActionText == "Empty Trash")
+			end) then return false end
+			local deadline = os.clock() + 1.5
+			while current() and not findTool("TrashBag") and os.clock() < deadline do task.wait(0.05) end
+			if findTool("TrashBag") then run.NextTakeAt = nil return true end
+			return false
 		end
 		return false
 	end
@@ -1720,6 +1798,10 @@ local ok, setupError = xpcall(function()
 	local function refreshPriorities()
 		local facts = {}
 		local function fact(rank, kind, object) facts[kind .. ":" .. tostring(object)] = {Rank = rank, Kind = kind} end
+		if cycle.State.CurrentPhase() == "NightShift" and (state.NextShift or state.Bosses or state.Clean) and slasherActive() then
+			if state.NextShift and shiftClockState() == "Ready" then fact(1, "NextShift", "Slasher")
+			else fact(1.75, "SlasherTrash", "Night") end
+		end
 		if state.Plankton or state.Bosses then for _, npc in all("Plankton") do
 			local object, part = npc.Instance, npc.Instance.PrimaryPart
 			if not usable(npc) or not part or object:GetAttribute("EscapedWithFormula") == true or object:GetAttribute("Kicked") == true
@@ -1810,6 +1892,8 @@ local ok, setupError = xpcall(function()
 		end
 		if state.Bosses and runJob(1.5, "BossHold", defeatBosses, false) then return end
 		if (state.Plankton or state.Bosses) and runJob(1.5, "Plankton", kickPlankton, false) then return end
+		if (state.NextShift or state.Bosses or state.Clean) and cycle.State.CurrentPhase() == "NightShift" and slasherActive()
+			and runJob(1.75, "SlasherTrash", slasherTrashStep) then return end
 		if state.Fire and runJob(2, "Fire", extinguishFires, true) then return end
 		if state.Energy and runJob(2, "Energy", refillEnergy) then return end
 		if (state.Serve or state.Cook or state.Clean or state.Energy) and runJob(2.5, "Inventory", manageInventory) then return end
