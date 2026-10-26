@@ -29,7 +29,7 @@ state.AutoFarm = false
 state.Upgrades = false
 state.Repair = false
 state.DutchmanDeals = true
-local features = {"Accept", "Cook", "Serve", "Bosses", "Plankton", "Troublemakers", "Revive", "Fire", "Clean", "Energy", "Skip", "NextShift", "Repair"}
+local features = {"Accept", "Cook", "Serve", "Bosses", "Plankton", "Troublemakers", "Revive", "Fire", "Clean", "Energy", "Skip", "NextShift", "Repair", "Upgrades"}
 local prompts, cooldowns = {}, setmetatable({}, {__mode = "k"})
 local window, airflow, worker, ownedRegister, idleConnection, kickPath, cleaningBoss, cleaningStarted
 local activeExtinguisher
@@ -147,7 +147,7 @@ local function prepareAction()
 	return current()
 end
 
-function session.StopAll(silent, farmOnly)
+function session.StopAll(silent)
 	session.Generation += 1
 	session.PendingTeleport = nil
 	session.PendingSip = nil
@@ -155,10 +155,6 @@ function session.StopAll(silent, farmOnly)
 	for _, name in features do
 		state[name] = false
 		if controls[name] then controls[name]:Set(false, true) end
-	end
-	if not farmOnly then
-		state.Upgrades = false
-		if controls.Upgrades then controls.Upgrades:Set(false, true) end
 	end
 	syncAutoFarm()
 	stopBossCleaning()
@@ -1938,14 +1934,12 @@ local ok, setupError = xpcall(function()
 	session.StatsTab = statsTab
 	session.TeleportsTab = teleports
 	controls.AutoFarm = main:CreateToggle({Name = "Auto Farm", CurrentValue = false, Callback = function(value)
-		if not value then session.StopAll(true, true) return end
+		if not value then session.StopAll(true) return end
 		session.Generation += 1
 		for _, name in features do
 			state[name] = true
 			controls[name]:Set(true, true)
 		end
-		state.Upgrades = true
-		controls.Upgrades:Set(true, true)
 		syncAutoFarm()
 	end})
 	main:CreateDivider()
@@ -1971,7 +1965,7 @@ local ok, setupError = xpcall(function()
 	end
 	main:CreateSection("Spending")
 	controls.Upgrades = main:CreateToggle({Name = "Smart Auto Upgrades", Desc = "30% nightly limit / $50 reserve", CurrentValue = false,
-		Callback = function(value) state.Upgrades = value session.Generation += 1 end})
+		Callback = function(value) state.Upgrades = value session.Generation += 1 syncAutoFarm() end})
 	controls.DutchmanDeals = main:CreateToggle({Name = "Flying Dutchman Deals", Desc = "Take every free deal", CurrentValue = state.DutchmanDeals,
 		Callback = function(value) state.DutchmanDeals = value session.Generation += 1 end})
 	local dealRow = controls.DutchmanDeals._frame
@@ -2079,7 +2073,7 @@ local ok, setupError = xpcall(function()
 		return string.format("%02d:%02d:%02d", seconds // 3600, seconds // 60 % 60, seconds % 60)
 	end
 	local function refreshStats(elapsed)
-		local enabled = state.Upgrades and 1 or 0
+		local enabled = 0
 		for _, name in features do if state[name] then enabled += 1 end end
 		local running, root = cycle.State.Running(), alive()
 		local paused = session.ManualUntil > os.clock() or session.PendingTeleport ~= nil
