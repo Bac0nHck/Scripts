@@ -1113,7 +1113,14 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
+	local function slasherActive()
+		for _, object in CollectionService:GetTagged("HashSlingingSlasher") do
+			if object:IsDescendantOf(workspace) and object:GetAttribute("Departing") ~= true and object:GetAttribute("Defeated") ~= true then return true end
+		end
+		return false
+	end
 	local function clean(mode)
+		if slasherActive() then return false end
 		local bagsOnly, urgent = mode == "bags", mode == "urgent"
 		local heldTrash, heldReference
 		for _, tool in tools() do
@@ -1270,10 +1277,11 @@ local ok, setupError = xpcall(function()
 	local function defeatBosses(quickOnly)
 		if not current() or not state.Bosses then return false end
 		if quickOnly then
-			local orbTarget, orbPriority, slasher = nil, -1, false
+			local orbTarget, orbPriority = nil, -1
 			for _, boss in all("Villain") do
 				if usable(boss) and not bossEnded(boss.Instance) then
 					local name = boss.Instance:GetAttribute("ReferenceName")
+					if name == "HashSlingingSlasher" then continue end
 					if name == "TattletaleStrangler" then
 						for _, officer in CollectionService:GetTagged("PoliceOfficer") do
 							local target = officer:FindFirstChild("Strangler")
@@ -1283,7 +1291,6 @@ local ok, setupError = xpcall(function()
 							end
 						end
 					end
-					if name == "HashSlingingSlasher" then slasher = true end
 					if name ~= "Plankton" and name ~= "DirtyBubble" and name ~= "MiniDirtyBubble" then
 						local priority = name == "ManRay" and 3 or name == "Dennis" and 2 or 1
 						if priority > orbPriority then orbTarget, orbPriority = boss, priority end
@@ -1312,7 +1319,6 @@ local ok, setupError = xpcall(function()
 					end
 				end
 			end
-			if slasher and clean("bags") then return true end
 			return false
 		end
 		if cleaningBoss then
@@ -1536,7 +1542,7 @@ local ok, setupError = xpcall(function()
 	end
 	local function unresolvedThreat()
 		if state.Bosses then for _, boss in all("Villain") do
-			if usable(boss) and not bossEnded(boss.Instance) then return true end
+			if usable(boss) and boss.Instance:GetAttribute("ReferenceName") ~= "HashSlingingSlasher" and not bossEnded(boss.Instance) then return true end
 		end end
 		if state.Plankton or state.Bosses then for _, npc in all("Plankton") do
 			local object = npc.Instance
@@ -1625,17 +1631,9 @@ local ok, setupError = xpcall(function()
 					and orbToolkit.isRecharged(machine._remotes.ReadyDay:Get()) and due(machine, "ClaimBossOrb") then orbReady = true end
 			end end
 			for _, boss in all("Villain") do
-				if not usable(boss) or bossEnded(boss.Instance) then continue end
+				if not usable(boss) or bossEnded(boss.Instance) or boss.Instance:GetAttribute("ReferenceName") == "HashSlingingSlasher" then continue end
 				local name = boss.Instance:GetAttribute("ReferenceName")
 				if orbReady and name ~= "Plankton" and name ~= "DirtyBubble" and name ~= "MiniDirtyBubble" then fact(1, "BossQuick", boss) end
-				if name == "HashSlingingSlasher" then
-					if findTool("TrashBag") then fact(1, "BossQuick", boss) end
-					for _, container in all("TrashBin") do
-						local object = container.Instance
-						if usable(container) and object:GetAttribute("Hidden") ~= true and (object:GetAttribute("ReadyToEmpty") == true
-							or object:GetAttribute("FullCapacity") == true or object:GetAttribute("BagPile") == true) then fact(1, "BossQuick", boss) break end
-					end
-				end
 			end
 			for _, boss in all("Dennis") do
 				if not orb and not bossPayments[boss] and not session.PendingOrbClaim and usable(boss) and not bossEnded(boss.Instance) and due(boss, "DennisPayoff")
@@ -1690,6 +1688,9 @@ local ok, setupError = xpcall(function()
 		end
 		if not cycle.State.Running() or session.ManualUntil > os.clock() or cameraSlice.State.InCutscene() then return end
 		if not cp:CanPerformAction() or busyCleaning() or os.clock() < actionLockUntil then stopBossCleaning() stopExtinguishing() return end
+		if state.NextShift and cycle.State.CurrentPhase() == "NightShift" and slasherActive() then
+			if runJob(1, "NextShift", nextShift) then return end
+		end
 		if (state.Plankton or state.Bosses) and runJob(1, "Formula", kickPlankton, true) then return end
 		if state.Bosses and runJob(1, "BossQuick", defeatBosses, true) then return end
 		if state.Energy and session.PendingSip and runJob(1.25, "Energy", refillEnergy) then return end
