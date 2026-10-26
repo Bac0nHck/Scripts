@@ -211,6 +211,7 @@ local ok, setupError = xpcall(function()
 	local registerSlice = module("Systems.Register.RegisterSlice")
 	local tableToolkit = module("Systems.Table.TableToolkit")
 	local npcToolkit = module("Systems.NPC.NPCToolkit")
+	local grouperToolkit = module("Systems.NPC.DonGrouperToolkit")
 	local planktonToolkit = module("Systems.NPC.PlanktonBallToolkit")
 	local orbToolkit = module("Systems.Workstation.OrbOfConfusionToolkit")
 	local dennisToolkit = module("Systems.NPC.DennisToolkit")
@@ -520,7 +521,14 @@ local ok, setupError = xpcall(function()
 		return true
 	end
 	local function ordered()
-		return restaurant.Actions.sortRestaurantOrders()
+		local list, ranks = table.clone(restaurant.Actions.sortRestaurantOrders()), {}
+		for index, order in list do ranks[order] = index end
+		table.sort(list, function(a, b)
+			local first, second = a.CustomerReference == grouperToolkit.Constants.ReferenceName, b.CustomerReference == grouperToolkit.Constants.ReferenceName
+			if first ~= second then return first end
+			return ranks[a] < ranks[b]
+		end)
+		return list
 	end
 	local function energyValues()
 		local cp = customPlayers:GetCustomPlayer()
@@ -1105,7 +1113,7 @@ local ok, setupError = xpcall(function()
 		end
 		return false
 	end
-	local function disposeTrash(tool, reference, validate)
+	local function disposeTrash(tool, reference, validate, message)
 		local destinations = reference == "Tray" and {"TrashBin"} or reference == "TrashBag" and {"Dumpster"} or {"TrashBin", "Dumpster"}
 		for _, name in destinations do
 			for _, container in all(name) do
@@ -1124,7 +1132,7 @@ local ok, setupError = xpcall(function()
 				repeat
 					if not tool.Parent or (tool:GetAttribute("Amount") or amount) < amount
 						or (object:GetAttribute("DisposedCount") or 0) > count and object:GetAttribute("LastDisposedBy") == player.UserId then
-						addLog(reference == "Tray" and "Removed an expired order tray" or reference == "TrashBag" and "Trash bag disposed" or "Trash disposed")
+						addLog(message or (reference == "Tray" and "Removed an expired order tray" or reference == "TrashBag" and "Trash bag disposed" or "Trash disposed"))
 						return true
 					end
 					if not current() then return false end
@@ -1142,8 +1150,15 @@ local ok, setupError = xpcall(function()
 		return false
 	end
 	local orphanTrays = setmetatable({}, {__mode = "k"})
-	local function trayIsExpired(component, tool)
+	local function trayHasSand(component)
+		for _, item in component._trayItemsList or {} do
+			if item.ReferenceName == grouperToolkit.Constants.SandyPatty then return true end
+		end
+		return false
+	end
+	local function trayNeedsDisposal(component, tool)
 		if not tool.Parent or component:GetOwner() ~= player then return false end
+		if trayHasSand(component) then return true end
 		local id = tool:GetAttribute("OrderId")
 		if type(id) ~= "string" or id == "" then return false end
 		for _, order in restaurant.State.RestaurantOrders() do
@@ -1161,10 +1176,12 @@ local ok, setupError = xpcall(function()
 		for _, component in all("Tray") do
 			local tool = component:GetTool()
 			if not tool or component:GetOwner() ~= player or not tool.Parent then continue end
-			if not trayIsExpired(component, tool) then orphanTrays[tool] = nil continue end
+			if not trayNeedsDisposal(component, tool) then orphanTrays[tool] = nil continue end
 			orphanTrays[tool] = orphanTrays[tool] or os.clock()
-			if os.clock() - orphanTrays[tool] >= 3 then
-				if disposeTrash(tool, "Tray", function() return trayIsExpired(component, tool) end) then orphanTrays[tool] = nil return true end
+			local sandy = trayHasSand(component)
+			if sandy or os.clock() - orphanTrays[tool] >= 3 then
+				if disposeTrash(tool, "Tray", function() return trayNeedsDisposal(component, tool) end,
+					sandy and "Reset a sand-covered order" or nil) then orphanTrays[tool] = nil return true end
 			end
 		end
 		if not hasInventoryRoom() then
