@@ -1484,18 +1484,18 @@ local ok, setupError = xpcall(function()
 		if phase ~= "NightShift" and phase ~= "DayShift" then return false end
 		local used, seats = tableToolkit.getSeatUsage()
 		local urgent = seats == 0 or used >= seats
-		if emergencyOnly and seats > 0 then return false end
+		if emergencyOnly and not urgent then return false end
 		if phase == "DayShift" and not urgent then return false end
-		local healthy, selected, cost = 0, nil, math.huge
+		local selected, cost = nil, math.huge
 		local existing = session.RepairBudget
 		for _, item in all("Table") do
 			if not usable(item) then continue end
-			if item.Instance:GetAttribute("Destroyed") ~= true then healthy += 1 continue end
+			if item.Instance:GetAttribute("Destroyed") ~= true then continue end
 			if existing and existing.Day == cycle.State.CurrentDay() and existing.Server == game.JobId and existing.Attempted[item.Instance] then continue end
 			local price = tableToolkit.getRepairCost(item.Instance:GetAttribute("DestroyedStyle"))
 			if type(price) == "number" and price >= 0 and price < cost then selected, cost = item, price end
 		end
-		if not selected or (healthy >= tableToolkit.Constants.DefaultUnlockedTableCount and not urgent) then return false end
+		if not selected then return false end
 		local balance, day = restaurant.Actions.getBalance(player), cycle.State.CurrentDay()
 		local budget = session.RepairBudget
 		if not budget or budget.Day ~= day or budget.Server ~= game.JobId then
@@ -1819,10 +1819,10 @@ local ok, setupError = xpcall(function()
 			if state.Cook and runJob(3, "Food", finishCooking, true) then return end
 			if state.Serve and runJob(3, "Serve", serve, false) then return end
 			if state.Cook and runJob(3, "Food", finishCooking, false) then return end
+			if state.Repair and runJob(3.25, "Repair", smartRepair, true) then return end
 			if state.Troublemakers and runJob(3.5, "Troublemakers", removeTroublemakers) then return end
 			if state.Cook and runJob(3.5, "Cook", cook) then return end
 			if state.Clean and runJob(3.5, "Clean", clean, "urgent") then return end
-			if state.Repair and runJob(3.5, "Repair", smartRepair, true) then return end
 			if state.Accept and runJob(4, "Accept", acceptOrder) then return end
 		else
 			if state.Troublemakers and runJob(4, "Troublemakers", removeTroublemakers) then return end
