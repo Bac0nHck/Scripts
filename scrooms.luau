@@ -59,6 +59,7 @@ local alive, autoMinigame, autoStart, selling = true, false, false, false
 local currentStage, currentGame = nil, nil
 local connections, patches, tweens = {}, {}, {}
 local nextCast, lastMessage, messageUntil, caught = 0, "", 0, 0
+local messageIsError = false
 local api = {}
 local theme = {
 	surface = Color3.fromRGB(25, 28, 32),
@@ -203,10 +204,7 @@ local status = create("TextLabel", {
 
 local function message(text, isError)
 	lastMessage, messageUntil = text, os.clock() + 5
-	if alive then
-		status.Text = text
-		status.TextColor3 = if isError then theme.error else theme.muted
-	end
+	messageIsError = isError == true
 end
 
 local function toggle(name, text, order, callback)
@@ -416,8 +414,6 @@ function api.SellAll()
 	if next(targets) == nil then message("No unfavorited mushrooms to sell") return end
 	selling = true
 	minigame:SetCastBlock(token, true)
-	sellButton.Text = if minigame.InSession then "Sell after catch..." else "Selling..."
-	sellButton.Active = false
 	task.spawn(function()
 		local root, origin, previousItem, moved
 		local ok, result = xpcall(function()
@@ -464,24 +460,30 @@ function api.SellAll()
 			local earned = (player:GetAttribute("chimes") or beforeChimes) - beforeChimes
 			return string.format("Sold %d mushrooms | +%d chimes", sold, earned)
 		end, debug.traceback)
-		if root and root.Parent and registry.C.Character:GetRoot() == root then
-			if moved and origin then
-				root.CFrame = origin
-				root.AssemblyLinearVelocity = Vector3.zero
-				root.AssemblyAngularVelocity = Vector3.zero
+		local restored, restoreError = pcall(function()
+			if root and root.Parent and registry.C.Character:GetRoot() == root then
+				if moved and origin then
+					root.CFrame = origin
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+				end
+				if previousItem then
+					local restore = if inventory.Cache[previousItem] then previousItem else "instrument"
+					inventory:Equip(restore)
+				end
 			end
-			if previousItem then
-				local restore = if inventory.Cache[previousItem] then previousItem else "instrument"
-				pcall(inventory.Equip, inventory, restore)
-			end
-		end
+		end)
 		minigame:SetCastBlock(token, false)
 		selling, nextCast = false, os.clock() + 1.2
 		if alive then
-			sellButton.Text, sellButton.Active = "Sell all mushrooms", true
-			message(if ok then result or "Ready" else "Sale failed. Try again", not ok)
+			if not restored then
+				message("Sale ended. Check your position", true)
+			else
+				message(if ok then result or "Ready" else "Sale failed. Try again", not ok)
+			end
 		end
 		if not ok then warn("Scrooms: " .. tostring(result)) end
+		if not restored then warn("Scrooms: could not restore character: " .. tostring(restoreError)) end
 	end)
 end
 connect(sellButton.Activated, api.SellAll)
@@ -573,14 +575,28 @@ connect(RunService.Heartbeat, function(deltaTime)
 			end
 		end
 	end
-	if os.clock() < messageUntil then return end
-	local text = if selling then "Selling after the current catch..."
+end)
+
+local renderElapsed = 0
+connect(RunService.Heartbeat, function(deltaTime)
+	renderElapsed += deltaTime
+	if renderElapsed < 0.2 then return end
+	renderElapsed = 0
+	local buttonText = if selling then (if minigame.InSession then "Sell after catch..." else "Selling...")
+		else "Sell all mushrooms"
+	if sellButton.Text ~= buttonText then sellButton.Text = buttonText end
+	if sellButton.Active == selling then sellButton.Active = not selling end
+	local showingMessage = os.clock() < messageUntil
+	local text = if showingMessage then lastMessage
+		elseif selling then (if minigame.InSession then "Finishing the current catch..." else "Selling mushrooms...")
 		elseif currentStage == "ring" then "Casting..."
 		elseif currentStage == "tune" then "Tuning..."
 		elseif currentStage == "main" then "Catching..."
 		elseif autoStart then "Waiting to cast..." else "Ready"
-	if caught > 0 then text ..= " | " .. caught .. " caught" end
-	if status.Text ~= text then status.Text, status.TextColor3 = text, theme.muted end
+	if caught > 0 and not showingMessage then text ..= " | " .. caught .. " caught" end
+	if status.Text ~= text then status.Text = text end
+	local color = if showingMessage and messageIsError then theme.error else theme.muted
+	if status.TextColor3 ~= color then status.TextColor3 = color end
 end)
 
 function api.GetState()
