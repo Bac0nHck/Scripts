@@ -51,8 +51,8 @@ end
 local minigame = registry.C.Minigame
 local inventory = registry.C.Inventory
 local data = registry.C.Data
-local itemDefinitions = require(ReplicatedStorage.Shared.Data.Items)
 local sellingRules = require(ReplicatedStorage.Shared.Utils.Selling)
+local questRules = require(ReplicatedStorage.Shared.Utils.Quest)
 local dialogueRemote = ReplicatedStorage.Network.Remotes.Dialogue
 local token = "ScroomsHub_" .. HttpService:GenerateGUID(false)
 local alive, autoMinigame, autoStart, selling = true, false, false, false
@@ -362,7 +362,7 @@ local sellButton = create("TextButton", {
 	LayoutOrder = 3,
 	BackgroundColor3 = theme.accent,
 	BorderSizePixel = 0,
-	Text = "Sell all mushrooms",
+	Text = "Sell inventory (keep quest items)",
 	TextColor3 = theme.surface,
 	TextSize = 14,
 	Font = Enum.Font.GothamMedium,
@@ -371,22 +371,21 @@ local sellButton = create("TextButton", {
 }, content)
 round(sellButton)
 
-local function mushrooms()
-	local result, otherSellable = {}, false
+local function saleItems()
+	local reserved = questRules:GetQuestStock(function(path)
+		return data:Get(path)
+	end)
+	local result = {}
 	for uid, item in data:Get({ "Inventory", "Items" }) or {} do
-		local definition = itemDefinitions[item.id]
-		if definition and not item.favorited and sellingRules:GetPrice(item) then
-			if definition.itemType == "scroom" then
-				result[uid] = true
-			else
-				otherSellable = true
-			end
+		if not reserved[uid] and not item.favorited and sellingRules:GetPrice(item) then
+			result[uid] = true
 		end
 	end
-	return result, otherSellable
+	return result
 end
 
 local merchants = { julian_sg = true, gregory_bc = true, pip_sm = true, justin_tt = true, drew_ug = true }
+local saleFilters = { "sellCommon", "sellUncommon", "sellRare", "sellWondrous", "sellFabled", "sellEversung", "sellShard", "sellSongsheet" }
 local function nearestMerchant(root)
 	local folder = workspace:FindFirstChild("World")
 	folder = folder and folder:FindFirstChild("NPCs")
@@ -402,20 +401,24 @@ local function nearestMerchant(root)
 	return nearest
 end
 
-local function countItems(items)
+local function countSold(targets)
+	local items = data:Get({ "Inventory", "Items" }) or {}
 	local count = 0
-	for _ in items do count += 1 end
+	for uid in targets do
+		if not items[uid] then count += 1 end
+	end
 	return count
 end
 
 function api.SellAll()
 	if not alive or selling then return end
-	local targets = mushrooms()
-	if next(targets) == nil then message("No unfavorited mushrooms to sell") return end
+	local targets = saleItems()
+	if next(targets) == nil then message("Nothing to sell. Quest items are kept") return end
 	selling = true
 	minigame:SetCastBlock(token, true)
 	task.spawn(function()
 		local root, origin, previousItem, moved
+		local previousFilters = {}
 		local ok, result = xpcall(function()
 			local waitUntil = os.clock() + 90
 			while alive and minigame.InSession and os.clock() < waitUntil do task.wait(0.1) end
@@ -426,10 +429,27 @@ function api.SellAll()
 			if not root or not humanoid or humanoid.Health <= 0 then return "Wait for your character" end
 			local merchant = nearestMerchant(root)
 			if not merchant then return "No merchant loaded nearby" end
-			local otherSellable
-			targets, otherSellable = mushrooms()
-			if not next(targets) then return "No unfavorited mushrooms to sell" end
-			local before = countItems(targets)
+			targets = saleItems()
+			if not next(targets) then return "Nothing to sell. Quest items are kept" end
+			for _, name in saleFilters do
+				if registry.C.Settings:Get(name) == false then
+					previousFilters[name] = false
+					registry.C.Settings:Set(name, true)
+				end
+			end
+			if next(previousFilters) then
+				local endAt = os.clock() + 4
+				while alive do
+					local confirmed = true
+					for name in previousFilters do
+						if data:Get({ "Settings", name }) ~= true then confirmed = false break end
+					end
+					if confirmed then break end
+					if os.clock() >= endAt then return "Could not update sale filters. Try again" end
+					task.wait(0.1)
+				end
+			end
+			if not alive then return "Sale cancelled" end
 			local beforeChimes = player:GetAttribute("chimes") or 0
 			origin, previousItem = root.CFrame, inventory:GetEquipped()
 			inventory:Equip(nil)
@@ -440,26 +460,21 @@ function api.SellAll()
 			end
 			task.wait(0.65)
 			if not alive or registry.C.Character:GetRoot() ~= root then return "Sale cancelled" end
-			if not otherSellable then
-				dialogueRemote:FireServer("nodeAction", { npc = merchant.Name, node = "sellAllDone" })
-				local endAt = os.clock() + 1.4
-				repeat task.wait(0.1) until not alive or not next(mushrooms()) or os.clock() >= endAt
-			end
-			for uid in mushrooms() do
-				if not alive or registry.C.Character:GetRoot() ~= root or humanoid.Health <= 0 then break end
-				if not targets[uid] then continue end
-				inventory:Equip(uid)
-				task.wait(0.15)
-				dialogueRemote:FireServer("nodeAction", { npc = merchant.Name, node = "sellHeldDone" })
-				local endAt = os.clock() + 1.5
-				repeat task.wait(0.1) until not alive or not (data:Get({ "Inventory", "Items" }) or {})[uid] or os.clock() >= endAt
-			end
-			local remaining = mushrooms()
-			local sold = before - countItems(remaining)
+			dialogueRemote:FireServer("nodeAction", { npc = merchant.Name, node = "sellAllKeepDone" })
+			local endAt = os.clock() + 4
+			repeat task.wait(0.1) until not alive or not next(saleItems()) or os.clock() >= endAt
+			local sold = countSold(targets)
 			if sold <= 0 then return "Sale refused. Try again near a merchant" end
 			local earned = (player:GetAttribute("chimes") or beforeChimes) - beforeChimes
-			return string.format("Sold %d mushrooms | +%d chimes", sold, earned)
+			return string.format("Sold %d items | +%d chimes", sold, earned)
 		end, debug.traceback)
+		local filtersRestored = true
+		for name, value in previousFilters do
+			local restored = pcall(function()
+				if registry.C.Settings:Get(name) == true then registry.C.Settings:Set(name, value) end
+			end)
+			if not restored then filtersRestored = false end
+		end
 		local restored, restoreError = pcall(function()
 			if root and root.Parent and registry.C.Character:GetRoot() == root then
 				if moved and origin then
@@ -476,7 +491,9 @@ function api.SellAll()
 		minigame:SetCastBlock(token, false)
 		selling, nextCast = false, os.clock() + 1.2
 		if alive then
-			if not restored then
+			if not filtersRestored then
+				message("Sale ended. Check your sale filters", true)
+			elseif not restored then
 				message("Sale ended. Check your position", true)
 			else
 				message(if ok then result or "Ready" else "Sale failed. Try again", not ok)
@@ -583,12 +600,12 @@ connect(RunService.Heartbeat, function(deltaTime)
 	if renderElapsed < 0.2 then return end
 	renderElapsed = 0
 	local buttonText = if selling then (if minigame.InSession then "Sell after catch..." else "Selling...")
-		else "Sell all mushrooms"
+		else "Sell inventory (keep quest items)"
 	if sellButton.Text ~= buttonText then sellButton.Text = buttonText end
 	if sellButton.Active == selling then sellButton.Active = not selling end
 	local showingMessage = os.clock() < messageUntil
 	local text = if showingMessage then lastMessage
-		elseif selling then (if minigame.InSession then "Finishing the current catch..." else "Selling mushrooms...")
+		elseif selling then (if minigame.InSession then "Finishing the current catch..." else "Selling inventory...")
 		elseif currentStage == "ring" then "Casting..."
 		elseif currentStage == "tune" then "Tuning..."
 		elseif currentStage == "main" then "Catching..."
