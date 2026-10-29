@@ -722,7 +722,7 @@ local function toggle(parent, name, text, order, getter, setter, isFilter)
 		if state.alive and not (isFilter and (state.selling or state.recovering)) then setter(not getter()) end
 	end)
 end
-toggle(body, "InstantCatch", "Instant Catch", 1, function() return state.instantCatch end, api.SetInstantCatch)
+toggle(body, "InstantCatch", "Instant catch", 1, function() return state.instantCatch end, api.SetInstantCatch)
 local divider = create("Frame", {
 	Name = "Divider", Size = UDim2.new(1, -4, 0, 9), LayoutOrder = 2, BackgroundTransparency = 1,
 }, body)
