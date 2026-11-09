@@ -306,14 +306,65 @@ local function finishPending()
 	minigame:SetCastBlock(token .. "_pending", false)
 	state.nextCast = os.clock() + 0.35
 end
+local function assistRhythm(object)
+	if object.Type == "Wind" then
+		patch(object._blow, token, true)
+		local moveCursor = object._moveCursor
+		patch(object, "_moveCursor", function(self, deltaTime, chartTime)
+			for _, note in self._notes do
+				if not note.done and chartTime >= note.time and chartTime < note.time + note.length then
+					local fraction = math.clamp((chartTime - note.time) / note.length, 0, 1)
+					self._pitch = note.from + (note.to - note.from) * fraction
+					self._target = self._pitch
+					break
+				end
+			end
+			return moveCursor(self, 0, chartTime)
+		end)
+	end
+	local step = object._step
+	object._scroomsCounted = object._scroomsCounted or {}
+	patch(object, "_step", function(self, deltaTime)
+		if not self._jan then return end
+		if not self._paused and not (self._hitstop and os.clock() < self._hitstop) then
+			if self.Type == "Wind" then self._blow[token] = true end
+			local chartTime = self:_chartTime()
+			if self._locked and self._countInPress then
+				for index, tapTime in self._countIn.taps do
+					if not self._scroomsCounted[index] and chartTime >= tapTime then
+						self._scroomsCounted[index] = true
+						if chartTime - tapTime <= 0.15 then self._countInPress() end
+					end
+				end
+			elseif not self._locked then
+				for _, note in self._groups or self._notes do
+					if note.time > chartTime then continue end
+					if self.Type == "Strings" and note.state == "pending" then
+						self:_hitGroup(note)
+					elseif self.Type == "Keys" and note.state == "pending" then
+						self:_hitNote(note, chartTime)
+					elseif self.Type == "Wind" and not note.headJudged then
+						self._pitch, self._target = note.from, note.from
+						self:_press()
+					elseif self.Type == "Percussion" and not note.judged and not note.ghost then
+						self:_hit(if note.kind == "big" then "don" else note.kind)
+						if self._jan and note.kind == "big" and not note.judged then self:_hit("ka") end
+					end
+					if not self._jan then return end
+				end
+			end
+		end
+		return step(self, deltaTime)
+	end)
+end
 local function assistStage(stage, object)
 	restorePatches()
 	if not (state.alive and object and object._jan) then return end
 	if stage == "main" then
-		local originalWin = object._winMinigame
-		patch(object, "_winMinigame", function(self)
-			if state.alive then beginPending() end
-			return originalWin(self)
+		local complete = object.OnComplete.Fire
+		patch(object.OnComplete, "Fire", function(self, success, ...)
+			if success and state.alive and not object._params.training then beginPending() end
+			return complete(self, success, ...)
 		end)
 	end
 	if state.instantCatch then
@@ -321,13 +372,11 @@ local function assistStage(stage, object)
 			if not state.alive or not state.instantCatch or state.game ~= object or not object._jan then return end
 			if stage == "ring" and not object._complete then
 				object.OnComplete:Fire(1)
-			elseif stage == "tune" then
-				object._elapsed = object._targetTime
 			elseif stage == "main" and not object._scroomsClaimed then
+				if object._params.infinite then return end
 				object._scroomsClaimed = true
-				beginPending()
-				object:SetProgress(1)
-				object:_winMinigame()
+				object._locked = false
+				object:_changeProgress(1)
 			end
 		end)
 	elseif state.autoMinigame then
@@ -339,20 +388,8 @@ local function assistStage(stage, object)
 					object:Complete()
 				end
 			end)
-		elseif stage == "tune" then
-			local original = object._step
-			patch(object, "_step", function(self, deltaTime)
-				self._needleX, self._needleVel = self._target, 0
-				return original(self, deltaTime)
-			end)
 		elseif stage == "main" then
-			for _, tracked in { object._marker, object._item } do
-				patch(tracked, "Step", function(self)
-					local low, high = object._zone:GetBounds()
-					self._pos, self._vel = (low + high) / 2, 0
-					self._frame.Position = UDim2.fromScale(self._pos, self._y)
-				end)
-			end
+			assistRhythm(object)
 		end
 	end
 end
@@ -363,8 +400,8 @@ local function recoverStage()
 		local ui = rawget(object, "_ui")
 		if typeof(ui) ~= "Instance" or not ui:IsDescendantOf(playerGui) then continue end
 		local stage = if rawget(object, "_targetRot") then "ring"
-			elseif rawget(object, "_targetTime") then "tune"
-			elseif rawget(object, "_zone") and rawget(object, "_item") then "main" else nil
+			elseif rawget(object, "_params") and type(object._changeProgress) == "function"
+				and type(object._chartTime) == "function" then "main" else nil
 		if stage then state.stage, state.game = stage, object return end
 	end
 end
@@ -722,7 +759,7 @@ local function toggle(parent, name, text, order, getter, setter, isFilter)
 		if state.alive and not (isFilter and (state.selling or state.recovering)) then setter(not getter()) end
 	end)
 end
-toggle(body, "InstantCatch", "Instant catch", 1, function() return state.instantCatch end, api.SetInstantCatch)
+toggle(body, "InstantCatch", "Instant Catch", 1, function() return state.instantCatch end, api.SetInstantCatch)
 local divider = create("Frame", {
 	Name = "Divider", Size = UDim2.new(1, -4, 0, 9), LayoutOrder = 2, BackgroundTransparency = 1,
 }, body)
@@ -860,11 +897,10 @@ connect(UserInputService.InputBegan, function(input, processed)
 end)
 connect(safeArea:GetPropertyChangedSignal("AbsoluteSize"), function() state.layoutDirty = true end)
 
-local function cast()
-	local action = registry.C.Input.Actions.Cast
-	if host.fire then host.fire(action.Pressed)
+local function fireSignal(signal)
+	if host.fire then host.fire(signal)
 	elseif host.connections then
-		for _, connection in host.connections(action.Pressed) do
+		for _, connection in host.connections(signal) do
 			if connection.Enabled then connection:Fire() end
 		end
 	end
@@ -875,6 +911,11 @@ connect(RunService.Heartbeat, function(deltaTime)
 	if logicElapsed < 0.1 then return end
 	logicElapsed = 0
 	if state.game and not state.game._jan then state.stage, state.game = nil, nil restorePatches() end
+	local tutorial = registry.UI.Tutorial
+	if (state.autoMinigame or state.instantCatch) and state.game and tutorial and tutorial._lesson == state.game then
+		local skip = tutorial.GUI.SkipMinigame
+		if skip.Visible then fireSignal(skip.Button.Activated) end
+	end
 	local pending = shared.pending
 	if pending then
 		minigame:SetCastBlock(token .. "_pending", true)
@@ -901,7 +942,7 @@ connect(RunService.Heartbeat, function(deltaTime)
 			if inventory:GetEquipped() ~= "instrument" then
 				if inventory.Cache.instrument then inventory:Equip("instrument") end
 			elseif os.clock() >= minigame._readyAt then
-				local ok, err = pcall(cast)
+				local ok, err = pcall(fireSignal, registry.C.Input.Actions.Cast.Pressed)
 				if not ok then
 					state.autoStart, state.viewDirty = false, true
 					message("Could not start catching", true)
